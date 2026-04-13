@@ -24,7 +24,7 @@
 
 ## 1. Executive Summary
 
-**Goal:** Build an end-to-end analytics solution that uses IRS Form 990 data (tax years 2016–2020) to help nonprofit leaders, funders, and capacity builders answer three questions:
+**Goal:** Build an end-to-end analytics solution that uses IRS **Form 990** (standard full form) data for tax years **2019–2025** (seven years, inclusive) to help nonprofit leaders, funders, and capacity builders answer three questions:
 
 1. **Who is thriving?** — Identify financially durable nonprofits and the factors that make them resilient.
 2. **Who is at risk?** — Detect organizations vulnerable to funding shocks and identify intervention thresholds.
@@ -45,6 +45,8 @@ The U.S. nonprofit sector has hundreds of thousands of public charities. Despite
 - Benchmark against peers
 - Identify where targeted support has the greatest impact
 
+**Scope:** This project focuses on **Form 990** (standard full form) filers — U.S. 501(c)(3) public charities. We exclude Form 990-EZ (short form for smaller orgs) and Form 990-PF (private foundations), as specified in the hackathon problem statement.
+
 ### 2.2 Specific Business Questions We Answer
 
 | # | Question | Module |
@@ -62,17 +64,17 @@ The U.S. nonprofit sector has hundreds of thousands of public charities. Despite
 
 ### 2.4 Judging Criteria Alignment
 
-| Criteria | Weight | How We Address It |
-|----------|--------|-------------------|
-| Peer Benchmarking (10pts) | 10% | Module 2 — explicit peer group definition by sector, size, geography |
-| Business Solution (10pts) | 10% | Clear problem definition, objectives, success criteria in this PRD |
-| Financial Insights (10pts) | 10% | Revenue decomposition, reserve analysis, shock modeling |
-| Depth of Solution (10pts) | 10% | Four interconnected modules with composite scoring |
-| Tool Accuracy (10pts) | 10% | Transparent feature engineering, validated against raw data |
-| Model Development (10pts) | 10% | EDA-driven model selection with justification and metrics |
-| Results (10pts) | 10% | Clear visualizations, threshold tables, actionable recommendations |
-| Level of Insights (10pts) | 10% | Non-obvious findings: hidden gems, tipping points, recovery pathways |
-| Business Storytelling (20pts) | 20% | Interactive dashboard + presentation narrative |
+| Category | Criteria | Weight | How We Address It |
+|----------|----------|--------|-------------------|
+| **Business Insights (40%)** | Peer Benchmarking (10pts) | 10% | Module 2 — explicit peer group definition by NTEE sector, size, geography |
+| | Business Solution (10pts) | 10% | Clear problem definition, objectives, success criteria in this PRD |
+| | Financial Insights (10pts) | 10% | Revenue decomposition, reserve analysis, shock modeling |
+| | Depth of Solution (10pts) | 10% | Four interconnected modules with composite scoring |
+| **Data Analysis (20%)** | Tool Accuracy & Precision (10pts) | 10% | Transparent feature engineering, validated against raw data; code matches stated insights |
+| | Model Development (10pts) | 10% | EDA-driven model selection with justification and metrics; feature selection with business intuition |
+| **Solution Development (20%)** | Results (10pts) | 10% | Clear visualizations, threshold tables, actionable recommendations |
+| | Level of Insights (10pts) | 10% | Non-obvious findings: hidden gems, tipping points, recovery pathways; insights beyond intuition |
+| **Business Storytelling (20%)** | Presentation & Narrative (20pts) | 20% | Interactive dashboard + engaging presentation; lead with business impact, not technical methods |
 
 ---
 
@@ -80,20 +82,27 @@ The U.S. nonprofit sector has hundreds of thousands of public charities. Despite
 
 ### 3.1 Source Files
 
-The data lives in `data/data_csv/` and consists of three CSV files parsed from IRS Form 990 XML filings:
+**Primary data** lives in `data/data_csv/` as one CSV per annual extract, parsed from IRS Form 990 XML (990 full form only — 990-EZ and 990-PF excluded). After concatenation and deduplication by `(EIN, TaxYear)`, the **target panel** is **`TaxYear` 2019–2025** (seven years, inclusive), aligned with the hackathon’s “seven years of Form 990 data” framing.
 
-| File | Rows | Tax Years Covered |
-|------|------|-------------------|
-| `2019_990.csv` | 5,308 | 2016, 2017, 2018 |
-| `2020_990.csv` | 2,773 | 2017, 2018, 2019 |
-| `2021_990.csv` | 24,374 | 2018, 2019, 2020 |
-| **Total** | **32,455** | **2016–2020 (5 years)** |
+| File | Rows (repo snapshot) | Notes |
+|------|----------------------|--------|
+| `2019_990.csv` | 5,308 | Present in repo |
+| `2020_990.csv` | 2,773 | Present in repo |
+| `2021_990.csv` | 24,374 | Present in repo |
+| `2022_990.csv` … `2025_990.csv` | — | Add as teammates land each year’s extract |
+| **Combined (before dedup)** | **32,455+** | Refresh totals when new files are added |
+
+Individual extract files can contain overlapping `TaxYear` values; deduplication (Section 5.2) yields one row per org per `TaxYear` across the full **2019–2025** panel.
+
+**Supplementary data** in `data/TEOS IRS Data/` contains IRS Tax Exempt Organization Search (TEOS) bulk files, used to look up `NTEE_CD` codes by EIN. The `ntee_col_addon.py` script joins these codes onto the primary CSVs.
 
 Additionally, ~17,000+ raw XML files exist in `2024_TEOS_XML_*` folders that can be parsed for 2022 data using the existing `parse_990.py` script if needed.
 
 ### 3.2 Data Structure
 
 Each row = one nonprofit (identified by EIN) for one tax year. Key: every row contains **Current Year (CY)** and **Prior Year (PY)** figures, effectively giving two years of data per filing.
+
+**Form Type Focus:** We use only the standard **Form 990** (full form). 990-EZ (short form) and 990-PF (private foundations) are excluded per the problem statement scope.
 
 **Unique EINs:** ~30,305 total
 - 28,251 EINs appear in only 1 tax year
@@ -102,15 +111,24 @@ Each row = one nonprofit (identified by EIN) for one tax year. Key: every row co
 
 **Geographic Coverage:** 56 states/territories. Top states: CA (3,542), NY (2,795), TX (1,687), PA (1,615), FL (1,442).
 
-**All Form Types:** 990 (standard full form — all 32,455 rows).
+**NTEE Code Coverage:** Each CSV includes an `NTEE_CD` column joined from the IRS TEOS (Tax Exempt Organization Search) bulk files via the `ntee_col_addon.py` script. Coverage by file:
 
-### 3.3 Raw Column Inventory (36 columns)
+| File | NTEE Match Rate |
+|------|-----------------|
+| `2019_990.csv` | 4,152 / 5,308 (78.2%) |
+| `2020_990.csv` | 2,149 / 2,773 (77.5%) |
+| `2021_990.csv` | 16,528 / 24,374 (67.8%) |
+
+For the ~25% of records without an NTEE code, we fall back to Mission-text classification (see Module 2, Section 6.2).
+
+### 3.3 Raw Column Inventory (37 columns)
 
 See [Appendix](#13-appendix-column-data-dictionary) for full definitions. The columns group into:
 
 | Category | Columns |
 |----------|---------|
 | **Identity** | EIN, OrgName, State, City, ZIP, TaxYear, TaxPeriodEnd, FormType, FormationYr, Mission |
+| **Classification** | NTEE_CD |
 | **Workforce** | Employees, Volunteers |
 | **Revenue** | GrossReceipts, TotalRevenueCY/PY, ContributionsGrantsCY/PY, ProgramServiceRevCY/PY, InvestmentIncomeCY, OtherRevenueCY, GovernmentGrantsAmt |
 | **Expenses** | TotalExpensesCY/PY, SalariesCY, FundraisingExpCY, ProgramSvcExpenses |
@@ -165,7 +183,7 @@ See [Appendix](#13-appendix-column-data-dictionary) for full definitions. The co
 
 ### 5.1 Purpose
 
-Load all three CSV files, clean them, merge into a single master DataFrame, and compute derived financial metrics that power all downstream modules.
+Load all CSV files (one per filing year), clean them, merge into a single master DataFrame, derive sector labels from the `NTEE_CD` column (with Mission-text fallback), and compute derived financial metrics that power all downstream modules.
 
 ### 5.2 Step-by-Step Implementation
 
@@ -175,11 +193,9 @@ Load all three CSV files, clean them, merge into a single master DataFrame, and 
 import pandas as pd
 import numpy as np
 
-files = [
-    'data/data_csv/2019_990.csv',
-    'data/data_csv/2020_990.csv',
-    'data/data_csv/2021_990.csv'
-]
+import glob
+
+files = sorted(glob.glob('data/data_csv/*_990.csv'))
 df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
 ```
 
@@ -340,6 +356,17 @@ df['RevenuePerEmployee'] = np.where(
     df['TotalRevenueCY'] / df['Employees'],
     np.nan
 )
+
+# Sector from NTEE code (primary) with Mission-text fallback
+# See Section 6.2 for full NTEE_SECTOR_MAP and classify_sector_from_mission()
+df['Sector'] = df['NTEE_CD'].apply(sector_from_ntee)
+mask_no_sector = df['Sector'].isna()
+df.loc[mask_no_sector, 'Sector'] = df.loc[mask_no_sector, 'Mission'].apply(
+    classify_sector_from_mission
+)
+
+# NTEE major group as a categorical feature for modeling
+df['NTEEMajorGroup'] = df['NTEE_CD'].str[0].str.upper().where(df['NTEE_CD'].notna())
 ```
 
 ##### 4f. Clip Extreme Outliers
@@ -368,7 +395,7 @@ print(f"Master table: {len(df)} rows, {len(df.columns)} columns")
 
 ### 5.3 Output
 
-A single `master_990.csv` file with ~30,000+ rows and ~50+ columns (36 original + ~15 engineered features) that serves as input to all downstream modules.
+A single `master_990.csv` file with ~30,000+ rows and ~55+ columns (37 original + ~18 engineered features including Sector, NTEEMajorGroup, and peer-group keys) that serves as input to all downstream modules.
 
 ---
 
@@ -384,40 +411,58 @@ A peer group is defined by **three dimensions**:
 
 | Dimension | How We Segment | Rationale |
 |-----------|---------------|-----------|
-| **Sector/Mission** | K-means clustering on Mission text (TF-IDF) OR manual NTEE code grouping | Comparing a hospital to a food bank is meaningless |
+| **Sector** | NTEE major category (primary); Mission-text keyword fallback for the ~25% of orgs missing NTEE | Comparing a hospital to a food bank is meaningless |
 | **Size** | Revenue-based size buckets: <500K, 500K-1M, 1M-5M, 5M-10M, 10M-50M, 50M+ | A $50M org operates differently than a $500K org |
 | **Geography** | State-level grouping | Cost of living and funding landscapes vary by state |
 
-#### Step 1: Create Sector Clusters from Mission Text
+#### Step 1: Derive Sector from NTEE Code (Primary) with Mission-Text Fallback
 
-Since we don't have NTEE codes in the data, we derive sector from the `Mission` field:
+The `NTEE_CD` column (joined from IRS TEOS data) is available for ~70–78% of records. NTEE codes follow the format `<MajorGroup><SubGroup>` (e.g., `B42` = Education – Graduate/Professional, `E62` = Healthcare – Ambulatory). We use the **major group letter** to define broad sector categories, falling back to Mission-text keyword matching for records without an NTEE code.
 
 ```python
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
+# NTEE major-group mapping (first character of NTEE code)
+NTEE_SECTOR_MAP = {
+    'A': 'Arts, Culture & Humanities',
+    'B': 'Education',
+    'C': 'Environment & Animals',
+    'D': 'Environment & Animals',
+    'E': 'Healthcare',
+    'F': 'Mental Health & Crisis',
+    'G': 'Diseases & Medical Research',
+    'H': 'Diseases & Medical Research',
+    'I': 'Crime & Legal',
+    'J': 'Employment & Jobs',
+    'K': 'Food, Agriculture & Nutrition',
+    'L': 'Housing & Shelter',
+    'M': 'Public Safety & Disaster Relief',
+    'N': 'Recreation & Sports',
+    'O': 'Youth Development',
+    'P': 'Human Services',
+    'Q': 'International Affairs',
+    'R': 'Civil Rights & Advocacy',
+    'S': 'Community Improvement',
+    'T': 'Philanthropy & Grantmaking',
+    'U': 'Science & Technology',
+    'V': 'Social Science Research',
+    'W': 'Public Policy',
+    'X': 'Religion',
+    'Y': 'Mutual Benefit',
+    'Z': 'Unknown / Unclassified',
+}
 
-# Clean mission text
-missions = df['Mission'].fillna('').str.lower().str.strip()
+def sector_from_ntee(ntee_code):
+    """Extract sector from the NTEE major-group letter."""
+    if pd.isna(ntee_code) or len(str(ntee_code).strip()) == 0:
+        return None
+    return NTEE_SECTOR_MAP.get(str(ntee_code).strip()[0].upper(), 'Other')
 
-# TF-IDF vectorization (convert text to numbers)
-tfidf = TfidfVectorizer(max_features=500, stop_words='english', min_df=5)
-mission_vectors = tfidf.fit_transform(missions)
-
-# Cluster into ~15-20 sector groups
-kmeans = KMeans(n_clusters=15, random_state=42, n_init=10)
-df['SectorCluster'] = kmeans.fit_predict(mission_vectors)
-
-# Manually inspect top terms per cluster to assign labels
-for i in range(15):
-    cluster_missions = missions[df['SectorCluster'] == i]
-    # Look at most common words to name each cluster
-    # e.g., Cluster 0 = "Education", Cluster 1 = "Healthcare", etc.
+df['Sector'] = df['NTEE_CD'].apply(sector_from_ntee)
 ```
 
-**Alternative (simpler) approach:** Use keyword matching on Mission text:
+**Fallback for records without NTEE:** Use keyword matching on the `Mission` field to assign a sector when `NTEE_CD` is missing:
 
 ```python
-def classify_sector(mission):
+def classify_sector_from_mission(mission):
     m = str(mission).lower()
     if any(w in m for w in ['school', 'education', 'student', 'university', 'college']):
         return 'Education'
@@ -426,24 +471,30 @@ def classify_sector(mission):
     elif any(w in m for w in ['housing', 'shelter', 'homeless']):
         return 'Housing & Shelter'
     elif any(w in m for w in ['food', 'hunger', 'meal', 'nutrition']):
-        return 'Food & Nutrition'
+        return 'Food, Agriculture & Nutrition'
     elif any(w in m for w in ['art', 'museum', 'cultural', 'theater', 'music']):
-        return 'Arts & Culture'
+        return 'Arts, Culture & Humanities'
     elif any(w in m for w in ['environment', 'conservation', 'wildlife', 'nature']):
-        return 'Environment'
+        return 'Environment & Animals'
     elif any(w in m for w in ['youth', 'child', 'children', 'kid']):
-        return 'Youth Services'
+        return 'Youth Development'
     elif any(w in m for w in ['church', 'faith', 'ministry', 'religious', 'worship']):
-        return 'Religious'
+        return 'Religion'
     elif any(w in m for w in ['community', 'civic', 'neighborhood']):
-        return 'Community Development'
+        return 'Community Improvement'
     elif any(w in m for w in ['research', 'science', 'technology']):
-        return 'Research & Science'
+        return 'Science & Technology'
     else:
-        return 'Other/General'
+        return 'Human Services'
 
-df['Sector'] = df['Mission'].apply(classify_sector)
+# Fill missing Sector from Mission text
+mask_no_sector = df['Sector'].isna()
+df.loc[mask_no_sector, 'Sector'] = df.loc[mask_no_sector, 'Mission'].apply(
+    classify_sector_from_mission
+)
 ```
+
+**Why NTEE first?** NTEE codes are IRS-assigned standard classifications that are consistent, auditable, and recognized industry-wide. Using them produces peer groups that judges and Fairlight Advisors will immediately understand (e.g., "E-series = Healthcare"). The Mission-text fallback ensures full coverage for the minority of records missing NTEE data.
 
 #### Step 2: Assign Peer Group ID
 
@@ -574,8 +625,14 @@ feature_cols = [
     # Org characteristics
     'OrgAge', 'Employees',
     # Scale (log-transformed to handle skew)
-    'LogRevenue', 'LogAssets'
+    'LogRevenue', 'LogAssets',
 ]
+
+# NTEE major group as one-hot encoded features (adds sector signal to the model)
+# Only used if NTEE coverage is sufficient; otherwise Sector (derived) can substitute
+ntee_dummies = pd.get_dummies(df['NTEEMajorGroup'], prefix='NTEE', dummy_na=False)
+feature_cols += list(ntee_dummies.columns)
+df = pd.concat([df, ntee_dummies], axis=1)
 
 # Log-transform skewed dollar amounts
 df['LogRevenue'] = np.log1p(df['TotalRevenueCY'].clip(lower=0))
@@ -1022,13 +1079,13 @@ Present all insights through an interactive dashboard that a non-technical funde
 ### 10.2 Dashboard Pages (Streamlit)
 
 #### Page 1: Executive Overview
-- Total nonprofits analyzed, by state and sector
+- Total nonprofits analyzed, by state and NTEE sector
 - Distribution of Resilience Scores (histogram)
 - Key stat cards: % At Risk, % Thriving, Average Resilience Score
 - Map visualization: average resilience by state
 
 #### Page 2: Peer Benchmarking Tool
-- **Inputs:** Select a specific org (by name or EIN), or select a peer group
+- **Inputs:** Select a specific org (by name or EIN), or select a peer group (by NTEE sector, size, state)
 - **Output:** Radar chart comparing org to peer median; table of all metrics with percentile ranks and flags
 - Box plots showing where the org falls within its peer distribution
 
@@ -1104,8 +1161,8 @@ if page == "Executive Overview":
 For the final presentation (slides), follow this story arc:
 
 1. **The Problem** (1 slide): Nonprofits operate in the dark about their financial resilience.
-2. **Our Approach** (1 slide): Four-module analytics platform using 7 years of IRS 990 data.
-3. **Key Finding 1 — Peer Benchmarking** (2 slides): "We identified X peer groups. Here's how sectors compare."
+2. **Our Approach** (1 slide): Four-module analytics platform using **seven years** of IRS Form 990 data (**2019–2025**), enriched with NTEE sector classifications.
+3. **Key Finding 1 — Peer Benchmarking** (2 slides): "We used NTEE codes to define X sector-based peer groups. Here's how sectors compare."
 4. **Key Finding 2 — Resilience Drivers** (2 slides): "The #1 predictor of resilience is operating reserves. Orgs with <3 months reserves are 4x more likely to be at risk."
 5. **Key Finding 3 — Stress Test Results** (2 slides): "Under a 30% grant shock, X% of orgs become critical. Government-grant-dependent orgs are most vulnerable."
 6. **Key Finding 4 — Hidden Gems** (2 slides): "We found X hidden gems. A $Y average donation could stabilize Z organizations."
@@ -1128,7 +1185,7 @@ For the final presentation (slides), follow this story arc:
 
 ### 11.2 Business Evaluation
 
-- **Peer groups make intuitive sense** — a hospital is grouped with hospitals, not food banks.
+- **Peer groups make intuitive sense** — NTEE-based sectors ensure a hospital (E-series) is grouped with hospitals, not food banks (K-series). Mission-text fallback orgs should land in plausible sectors.
 - **Resilience scores align with known outcomes** — spot-check orgs with very low scores to confirm they show financial distress signals.
 - **Stress test results are plausible** — orgs heavily dependent on grants should be most affected by grant shocks.
 - **Hidden gems are genuinely small, efficient, and growing** — not just data artifacts.
@@ -1136,14 +1193,16 @@ For the final presentation (slides), follow this story arc:
 ### 11.3 Validation Approach
 
 Since we have multi-year data, use **temporal validation**:
-- Train the model on 2016–2018 data
-- Predict 2019–2020 outcomes
-- Check: did orgs we predicted as "At Risk" in 2018 actually show financial deterioration in 2019–2020?
+- Train the model on earlier years in the panel (e.g. **2019–2021**)
+- Predict outcomes on holdout years (e.g. **2022–2025**)
+- Check: did orgs flagged “At Risk” in the train era show deterioration in the holdout era?
+
+Adjust the split if class balance or row counts require it; keep the rule “train on past, test on future” within **2019–2025**.
 
 ```python
-# Temporal validation
-train_df = df[df['TaxYear'] <= 2018]
-test_df = df[df['TaxYear'] >= 2019]
+# Temporal validation (illustrative split for a 2019–2025 panel)
+train_df = df[df['TaxYear'] <= 2021]
+test_df = df[df['TaxYear'] >= 2022]
 
 # Train on earlier years, predict on later years
 # This is the most honest evaluation for time-series financial data
@@ -1157,7 +1216,7 @@ test_df = df[df['TaxYear'] >= 2019]
 
 | Step | Task | Output |
 |------|------|--------|
-| 1.1 | Load and concatenate all 3 CSV files | Combined DataFrame |
+| 1.1 | Load and concatenate all `*_990.csv` annual extracts | Combined DataFrame |
 | 1.2 | Deduplicate EIN+TaxYear combinations | Clean DataFrame |
 | 1.3 | Handle missing values and data types | Cleaned DataFrame |
 | 1.4 | Compute all derived features (Section 5.4) | `master_990.csv` |
@@ -1167,7 +1226,7 @@ test_df = df[df['TaxYear'] >= 2019]
 
 | Step | Task | Output |
 |------|------|--------|
-| 2.1 | Classify sectors from Mission text | Sector column |
+| 2.1 | Map NTEE major groups to sector labels; apply Mission-text fallback for missing NTEE | Sector column |
 | 2.2 | Define peer groups (Sector × Size × State) | PeerGroupID column |
 | 2.3 | Compute peer group statistics (median, IQR) | Peer stats table |
 | 2.4 | Compute Z-scores and deviation flags | Benchmark columns |
@@ -1226,11 +1285,12 @@ test_df = df[df['TaxYear'] >= 2019]
 | `State` | string | 2-letter state abbreviation |
 | `City` | string | City name |
 | `ZIP` | string | ZIP code |
-| `TaxYear` | int | The tax year this filing covers (e.g., 2018) |
-| `TaxPeriodEnd` | date | End date of the tax period (e.g., 2019-06-30) |
+| `TaxYear` | int | The tax year this filing covers (panel target: 2019–2025) |
+| `TaxPeriodEnd` | date | End date of the tax period (e.g., 2024-06-30) |
 | `FormType` | string | Always "990" in this dataset |
 | `FormationYr` | int | Year the organization was formed/incorporated |
 | `Mission` | string | Free-text description of the organization's mission |
+| `NTEE_CD` | string | National Taxonomy of Exempt Entities code (e.g., `B42`, `E62`). Joined from IRS TEOS bulk data. NULL for ~25% of records — use Mission-text fallback for sector classification. The first character is the major-group letter (A–Z). |
 | `Employees` | float | Total number of employees |
 | `Volunteers` | float | Total number of volunteers |
 | `GrossReceipts` | float | Total gross receipts (all money received) |
@@ -1280,6 +1340,8 @@ test_df = df[df['TaxYear'] >= 2019]
 | `OrgAge` | TaxYear − FormationYr | Years since formation |
 | `SizeCategory` | Revenue-based bins | <500K, 500K-1M, 1M-5M, 5M-10M, 10M-50M, 50M+ |
 | `RevenuePerEmployee` | TotalRevenueCY / Employees | Productivity proxy |
+| `Sector` | NTEE major-group label; Mission-text fallback | Readable sector name for peer grouping and display |
+| `NTEEMajorGroup` | First character of NTEE_CD (A–Z) | Categorical feature for ML models (one-hot encoded) |
 | `LogRevenue` | log(1 + TotalRevenueCY) | Log-transformed revenue for modeling |
 | `LogAssets` | log(1 + TotalAssetsEOY) | Log-transformed assets for modeling |
 | `ResilienceScore` | Weighted composite (0–100) | Overall financial resilience rating |
@@ -1294,9 +1356,10 @@ aggie_hacks_2026/
 ├── PRD.md                          # This document
 ├── data/
 │   ├── data_csv/
-│   │   ├── 2019_990.csv            # Raw data (TY 2016-2018)
-│   │   ├── 2020_990.csv            # Raw data (TY 2017-2019)
-│   │   └── 2021_990.csv            # Raw data (TY 2018-2020)
+│   │   ├── 2019_990.csv …          # Annual extracts; panel TaxYear 2019–2025
+│   │   └── 2025_990.csv            # (add each year); all include NTEE_CD after ntee_col_addon.py
+│   ├── TEOS IRS Data/              # IRS TEOS bulk files (source for NTEE lookup)
+│   │   ├── eo1.csv ... eo4.csv     # Split/chunked TEOS extracts
 │   └── master_990.csv              # Output of Module 1
 ├── notebooks/
 │   ├── 01_data_pipeline.ipynb      # Module 1: Load, clean, feature engineering
@@ -1307,18 +1370,26 @@ aggie_hacks_2026/
 │   └── 06_hidden_gems.ipynb        # Module 5: Impact discovery
 ├── src/
 │   ├── data_pipeline.py            # Module 1 as reusable functions
-│   ├── peer_benchmark.py           # Module 2 functions
+│   ├── peers.py                    # Module 2: Peer Z-scores and benchmarks
 │   ├── resilience_model.py         # Module 3 functions
 │   ├── risk_simulation.py          # Module 4 functions
 │   └── hidden_gems.py              # Module 5 functions
+├── scripts/
+│   └── build_artifacts.py          # One-command: master CSV + train model + artifacts
+├── artifacts/
+│   ├── resilience_classifier.joblib  # Fitted sklearn Pipeline
+│   └── train_metrics.json          # Metrics, importances, decision threshold
 ├── app.py                          # Module 6: Streamlit dashboard
 ├── outputs/
 │   ├── eda_correlation_heatmap.png
 │   ├── feature_importance.png
 │   └── ...                         # All generated plots
-├── models/
-│   └── resilience_model.pkl        # Saved trained model
-├── parse_990.py                    # Existing XML parser
+├── tests/
+│   ├── test_pipeline.py            # Pipeline unit tests
+│   └── test_resilience_model.py    # Model training smoke tests
+├── parse_990.py                    # XML parser for raw IRS filings
+├── ntee_col_addon.py               # Joins NTEE_CD from TEOS data onto CSVs
+├── split_csvs.py                   # Splits large TEOS CSVs for Git (<50 MB)
 └── requirements.txt                # Python dependencies
 ```
 
