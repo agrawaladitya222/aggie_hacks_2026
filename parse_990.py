@@ -153,7 +153,7 @@ def parse_990(filepath):
 # per folder into ../data/data_csv/
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    base_dir    = os.path.join(os.path.dirname(__file__), '..', 'data')
+    base_dir    = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
     output_dir  = os.path.join(base_dir, 'data_csv')
     os.makedirs(output_dir, exist_ok=True)
 
@@ -184,6 +184,6 @@ if __name__ == '__main__':
             df  = pd.DataFrame(records)
             out = os.path.join(output_dir, f'{folder_name}.csv')
             df.to_csv(out, index=False)
-            print(f"  [{folder_name}] {len(df)} orgs, {len(df.columns)} fields → {out}")
+            print(f"  [{folder_name}] {len(df)} orgs, {len(df.columns)} fields -> {out}")
 
     print("\nDone.")
