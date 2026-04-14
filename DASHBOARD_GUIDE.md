@@ -15,13 +15,14 @@ thousands of U.S. nonprofits.
 5. [Page 3 — Resilience Explorer](#page-3--resilience-explorer)
 6. [Page 4 — Stress Test Simulator](#page-4--stress-test-simulator)
 7. [Page 5 — Hidden Gems Finder](#page-5--hidden-gems-finder)
-8. [Metric Reference](#metric-reference)
+8. [Page 6 — Brand Map](#page-6--brand-map)
+9. [Metric Reference](#metric-reference)
 
 ---
 
 ## How to Navigate
 
-The left sidebar contains the navigation menu. Click any of the five page names to
+The left sidebar contains the navigation menu. Click any of the six page names to
 switch pages:
 
 - Executive Overview
@@ -29,6 +30,7 @@ switch pages:
 - Resilience Explorer
 - Stress Test Simulator
 - Hidden Gems Finder
+- Brand Map
 
 The sidebar also shows the total number of organizations and states included in the
 dataset at the bottom.
@@ -255,13 +257,24 @@ Choose one of five pre-modeled scenarios from the dropdown:
 
 | Scenario | What it simulates |
 |---|---|
-| Grant Shock (-30%) | Donations and grants drop 30% — models a major donor withdrawal or economic downturn |
-| Gov Grant Shock (-50%) | Government funding is cut in half — models policy changes or budget sequestration |
-| Program Rev Shock (-25%) | Earned program revenue falls 25% — models reduced demand or pandemic-like disruptions |
-| Investment Shock (-40%) | Investment returns drop 40% — models a stock market crash hitting endowment-funded orgs |
-| Combined Recession (-20%) | All revenue sources drop 20% simultaneously — models a broad economic recession |
+| Grant Shock | Donations and grants drop — models a major donor withdrawal or economic downturn. Only organizations that receive private contributions are affected. |
+| Gov Grant Shock | Government funding is cut — models policy changes or budget sequestration. Organizations without government grants are entirely unaffected. |
+| Program Revenue Shock | Earned program revenue falls — models reduced demand or pandemic-like service disruptions. Fee-for-service and tuition-dependent nonprofits bear the full impact. |
+| Investment Shock | Investment returns drop — models a stock market crash affecting endowment-dependent organizations. Impact is concentrated among larger organizations. |
+| Combined Recession | All four revenue streams drop simultaneously — models a broad economic recession. Typically affects more organizations than a larger single-stream shock. |
 
-A blue callout box beneath the selector describes the selected scenario in more detail.
+A blue callout box beneath the selector describes the selected scenario in more detail,
+including which specific revenue streams are affected.
+
+### Section: Customize Shock Intensity
+
+After selecting a scenario, one or more sliders appear — one per affected revenue
+stream — allowing you to set the exact percentage drop for each stream (0–100%,
+in 5% steps). Default values reflect realistic historical shock levels.
+
+For the **Combined Recession** scenario, a **"Sync all sliders"** checkbox appears
+(enabled by default). When synced, dragging any one slider moves all streams to the
+same percentage simultaneously.
 
 ### Section: Overall Impact
 
@@ -275,9 +288,11 @@ post-shock status category:
 | Stressed (>12 months reserves) | Would dip into reserves but survive long-term |
 | Survives (Surplus) | Absorbs the shock and remains in surplus |
 
-An orange impact banner always appears below the cards, stating the combined
-percentage of organizations that would face serious distress (Critical + At Risk) and
-the estimated count.
+An orange impact banner always appears below the cards, stating:
+- The combined percentage of organizations facing serious distress (Critical + At Risk)
+  and the estimated count
+- The average revenue lost as a percentage of total revenue across exposed organizations
+- The share of organizations that are directly exposed to the shock at all
 
 ### Section: Status Distribution Charts
 
@@ -376,6 +391,105 @@ A table of all hidden gems matching the current filters (up to 300 rows), showin
 - Revenue Growth (year-over-year)
 - Reserve Months
 - Donation to Stabilize ($ amount to reach 6-month reserves)
+
+---
+
+## Page 6 — Brand Map
+
+**Purpose:** Visualize the entire nonprofit landscape across two dimensions at once —
+mission spending efficiency and financial runway — to instantly spot which
+organizations are thriving, which are fragile, and which are well-funded but
+underperforming on mission.
+
+### Overview
+
+The page title reads **"Brand Map: Mission Efficiency vs. Financial Runway"**. A
+subtitle explains the two axes, and a caption notes that each circle represents one
+nonprofit, circle size encodes annual revenue (larger = bigger organization), and
+color encodes financial resilience tier.
+
+An expandable section ("What do the hover fields mean?") explains three key fields
+that appear in the hover tooltip:
+
+- **Surplus Margin** — the percentage of revenue left after expenses (positive = surplus, negative = deficit)
+- **Resilience Tier** — a summary rating (Stable / Watch / At Risk) derived from
+  reserves, revenue mix, program spending, surplus, and debt:
+  - 🟢 **Stable** — financially healthy, likely to weather a funding disruption
+  - 🟡 **Watch** — early warning signs; not in crisis but worth monitoring
+  - 🔴 **At Risk** — low reserves, deficits, or heavy dependency on a single funding source
+- **Grant Dependency** — share of revenue from grants and donations; above 80% signals
+  vulnerability if a major grant is lost
+
+### Filters
+
+Five dropdowns narrow the chart to any slice of the data:
+
+| Filter | What it controls |
+|---|---|
+| Sector | NTEE nonprofit sector (e.g., Health, Education, Human Services) |
+| State | Any U.S. state or territory |
+| Size | Revenue size band (500K–1M, 1M–5M, 5M–10M, 10M–50M, 50M+) |
+| Tax Year | The IRS filing year to display |
+| Resilience Tier | All Tiers, 🟢 Stable, 🟡 Watch, or 🔴 At Risk |
+
+### Scatter Plot
+
+The main visualization is an interactive scatter plot with:
+
+- **X-axis** — Program Expense Ratio (what fraction of every dollar goes to mission)
+- **Y-axis** — Operating Reserve Months (how many months of runway without new
+  funding; capped at 36 months so outliers don't compress the chart)
+- **Color** — Resilience Tier: green (Stable), orange (Watch), red (At Risk)
+- **Dot size** — Log-scaled annual revenue (larger dot = bigger organization)
+
+Two **dashed purple crosshairs** mark the median Program Expense Ratio and the
+median Reserve Months for the current filtered view, dividing the chart into four
+quadrants labeled:
+
+| Position | Label |
+|---|---|
+| Top-right | High efficiency / Well-resourced |
+| Top-left | Low efficiency / Well-resourced |
+| Bottom-right | High efficiency / Fragile |
+| Bottom-left | Low efficiency / Fragile |
+
+Hover over any dot to see the organization name, state, total revenue, NTEE sector,
+surplus margin, grant dependency, and resilience tier.
+
+A line below the chart states the exact median values used for the crosshairs.
+
+### Quadrant Insights
+
+Up to three automatic callout boxes appear beneath the chart if the filtered data
+contains notable clusters:
+
+- **Danger Zone** (orange callout) — organizations with high program efficiency but
+  fewer than 3 months of reserves; efficient at mission but one funding cut from crisis
+- **Underutilized Resources** (blue callout) — organizations with strong reserves but
+  below-median program spending; well-funded but not fully directing dollars to mission
+- **Critical** (orange callout) — organizations with negative reserve months, meaning
+  they are already spending down net assets and face imminent insolvency
+
+### Section: Tier Breakdown (Filtered View)
+
+Three metric cards — one for each resilience tier (Stable, Watch, At Risk) — show
+the count and percentage of organizations in the current filtered view that fall into
+each tier. Cards are color-coded green, orange, and red respectively.
+
+### Browse Organizations Table
+
+An expandable section ("Browse organizations in this view") contains a sortable table
+of up to 400 organizations matching the current filters, sorted from lowest to highest
+reserve months. Columns include:
+
+- Organization name and state
+- Sector and size
+- Annual revenue
+- Program Spending %
+- Reserve Months
+- Surplus Margin
+- Grant Dependency %
+- Resilience Tier
 
 ---
 
