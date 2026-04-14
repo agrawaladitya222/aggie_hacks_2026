@@ -1,6 +1,0 @@
-# Large source data — too big for GitHub
-data/TEOS IRS Data/actual/
-.venv/
-__pycache__/
-.DS_Store
-
