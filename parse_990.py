@@ -2,8 +2,11 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import os
 import glob
+import tempfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 NS = 'http://www.irs.gov/efile'
+MAX_CSV_BYTES = 50 * 1024 * 1024  # 50 MB
 def ns(tag): return f'{{{NS}}}{tag}'
 
 def get_text(el, *path):
@@ -149,13 +152,90 @@ def parse_990(filepath):
 
 
 # ---------------------------------------------------------------------------
-# Batch runner — parses all XML folders under ../data/ and writes one CSV
-# per folder into ../data/data_csv/
+# NTEE enrichment helpers
+# ---------------------------------------------------------------------------
+
+def load_teos_lookup(base_dir):
+    """Load TEOS NTEE_CD data for EIN lookups. Returns None if unavailable."""
+    teos_dir = os.path.join(base_dir, 'TEOS IRS Data')
+    if not os.path.isdir(teos_dir):
+        print("[NTEE] TEOS IRS Data folder not found — skipping NTEE enrichment.")
+        return None
+    teos_csvs = [
+        os.path.join(teos_dir, f)
+        for f in os.listdir(teos_dir)
+        if f.endswith('.csv') and os.path.isfile(os.path.join(teos_dir, f))
+    ]
+    if not teos_csvs:
+        print("[NTEE] No TEOS CSV files found — skipping NTEE enrichment.")
+        return None
+    teos_df = pd.concat(
+        [pd.read_csv(f, usecols=['EIN', 'NTEE_CD'], dtype=str) for f in teos_csvs],
+        ignore_index=True,
+    ).drop_duplicates(subset='EIN')
+    teos_df['EIN'] = teos_df['EIN'].str.strip()
+    print(f"[NTEE] Loaded {len(teos_df)} orgs from TEOS")
+    return teos_df
+
+
+def enrich_ntee(df, teos_df):
+    """Left-join NTEE_CD onto df via EIN. No-op if teos_df is None."""
+    if teos_df is None:
+        return df
+    df['_EIN_key'] = df['EIN'].str.replace('-', '', regex=False).str.strip()
+    df = df.merge(
+        teos_df.rename(columns={'EIN': '_EIN_key'}),
+        on='_EIN_key', how='left',
+    )
+    df.drop(columns=['_EIN_key'], inplace=True)
+    matched = df['NTEE_CD'].notna().sum()
+    print(f"    NTEE: {matched}/{len(df)} orgs matched")
+    return df
+
+
+# ---------------------------------------------------------------------------
+# CSV writer — splits into ≤50 MB chunks when needed
+# ---------------------------------------------------------------------------
+
+def write_csv_split(df, output_dir, base_name, max_bytes=MAX_CSV_BYTES):
+    """Write df to output_dir/base_name.csv, splitting if the file exceeds max_bytes."""
+    # Write to a temp file to get the real on-disk size before committing
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix='.csv', dir=output_dir)
+    os.close(tmp_fd)
+    df.to_csv(tmp_path, index=False)
+    total_size = os.path.getsize(tmp_path)
+
+    if total_size <= max_bytes:
+        out = os.path.join(output_dir, f'{base_name}.csv')
+        os.replace(tmp_path, out)
+        print(f"  -> {base_name}.csv ({total_size / 1024 / 1024:.1f} MB, {len(df)} rows)")
+    else:
+        os.unlink(tmp_path)
+        total_rows = len(df)
+        rows_per_chunk = max(1, int(total_rows * max_bytes / total_size))
+        chunk_num = 1
+        start = 0
+        while start < total_rows:
+            chunk = df.iloc[start:start + rows_per_chunk]
+            out = os.path.join(output_dir, f'{base_name}_{chunk_num}.csv')
+            chunk.to_csv(out, index=False)
+            actual_size = os.path.getsize(out)
+            print(f"  -> {base_name}_{chunk_num}.csv ({actual_size / 1024 / 1024:.1f} MB, {len(chunk)} rows)")
+            start += rows_per_chunk
+            chunk_num += 1
+
+
+# ---------------------------------------------------------------------------
+# Batch runner — parses all XML folders under data/ and writes CSV(s)
+# per folder into data/data_csv/, with NTEE_CD merged in and auto-splitting
+# at 50 MB.
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    base_dir    = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-    output_dir  = os.path.join(base_dir, 'data_csv')
+    base_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+    output_dir = os.path.join(base_dir, 'data_csv')
     os.makedirs(output_dir, exist_ok=True)
+
+    teos_df = load_teos_lookup(base_dir)
 
     # Find every sub-folder that contains XML files (e.g. 2019_990, 2020_990 …)
     xml_folders = sorted([
@@ -168,22 +248,30 @@ if __name__ == '__main__':
     else:
         for folder_name in xml_folders:
             folder_path = os.path.join(base_dir, folder_name)
-            xml_files   = glob.glob(os.path.join(folder_path, '*.xml'))
+            xml_files   = glob.glob(os.path.join(folder_path, '**', '*.xml'), recursive=True)
 
             if not xml_files:
                 print(f"  [{folder_name}] No XML files found, skipping.")
                 continue
 
-            print(f"[{folder_name}] Parsing {len(xml_files)} files…")
-            records = [r for r in (parse_990(f) for f in xml_files) if r]
+            workers = min(os.cpu_count() or 4, 8)
+            print(f"\n[{folder_name}] Parsing {len(xml_files)} files using {workers} workers…")
+            records = []
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(parse_990, f): f for f in xml_files}
+                for i, future in enumerate(as_completed(futures), 1):
+                    result = future.result()
+                    if result:
+                        records.append(result)
+                    if i % 1000 == 0:
+                        print(f"    [{folder_name}] {i}/{len(xml_files)} files processed…")
 
             if not records:
                 print(f"  [{folder_name}] No valid records extracted, skipping.")
                 continue
 
-            df  = pd.DataFrame(records)
-            out = os.path.join(output_dir, f'{folder_name}.csv')
-            df.to_csv(out, index=False)
-            print(f"  [{folder_name}] {len(df)} orgs, {len(df.columns)} fields -> {out}")
+            df = pd.DataFrame(records)
+            df = enrich_ntee(df, teos_df)
+            write_csv_split(df, output_dir, folder_name)
 
     print("\nDone.")
