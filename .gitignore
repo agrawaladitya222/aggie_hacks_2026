@@ -3,4 +3,4 @@ data/TEOS IRS Data/actual/
 .venv/
 __pycache__/
 .DS_Store
-*.pdf
+
