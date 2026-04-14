@@ -59,7 +59,7 @@ def sector_from_ntee(ntee_code: object) -> str | None:
     ntee = str(ntee_code).strip()
     if not ntee:
         return None
-    return NTEE_SECTOR_MAP.get(ntee[0].upper(), "Other")
+    return NTEE_SECTOR_MAP.get(ntee[0].upper())
 
 
 def classify_sector_from_mission(mission: object) -> str:

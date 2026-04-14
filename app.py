@@ -1127,8 +1127,8 @@ def gems_page() -> None:
         )
         fig.update_layout(
             legend_title_text="",
-            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
-            margin=dict(t=10),
+            legend=dict(orientation="h", yanchor="top", y=-0.35, xanchor="center", x=0.5),
+            margin=dict(t=10, b=80),
             height=500,
         )
         st.caption("Click any point to select an organization and see its score breakdown highlighted in the table below.")
@@ -1436,7 +1436,7 @@ def brand_map_page(df: pd.DataFrame) -> None:
     if len(plot_df) > 50:
         med_x = plot_df["ProgramExpenseRatio"].median()
 
-        # Top-right: high efficiency, well-resourced (Danger Zone — efficient but fragile)
+        # Bottom-right: high efficiency, low reserves (Danger Zone — efficient but fragile)
         danger_zone = plot_df[
             (plot_df["ProgramExpenseRatio"] >= med_x)
             & (plot_df["_ReservesCapped"] < 3)
@@ -1444,7 +1444,7 @@ def brand_map_page(df: pd.DataFrame) -> None:
         if len(danger_zone) > 0:
             st.markdown(
                 f'<div class="insight-box-warn">'
-                f"<strong>Danger Zone (top-right):</strong> <strong>{len(danger_zone):,}</strong> orgs "
+                f"<strong>Danger Zone (bottom-right):</strong> <strong>{len(danger_zone):,}</strong> orgs "
                 f"are highly mission-focused but have <strong>under 3 months of reserves</strong> "
                 f"— efficient but one funding cut away from crisis."
                 f"</div>",

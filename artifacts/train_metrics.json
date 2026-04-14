@@ -1,61 +1,61 @@
 {
   "best_model": "Random Forest",
-  "cv_auc_mean": 0.9999999332339314,
-  "cv_auc_std": 5.056240858692944e-08,
+  "cv_auc_mean": 0.9021205851402005,
+  "cv_auc_std": 0.01345691443347402,
   "all_models": [
     {
       "Model": "Random Forest",
-      "AUC-ROC": 0.999999914240544,
-      "Precision (At Risk)": 0.9997524262230144,
-      "Recall (At Risk)": 0.9999009557767543,
-      "F1 (At Risk)": 0.9998266854836713,
-      "Accuracy": 0.9999118188002318
+      "AUC-ROC": 0.9015275396492173,
+      "Precision (At Risk)": 0.9099463410840656,
+      "Recall (At Risk)": 0.5794582280988462,
+      "F1 (At Risk)": 0.7080358223405543,
+      "Accuracy": 0.878435917462397
     },
     {
       "Model": "XGBoost",
-      "AUC-ROC": 0.9999658907451454,
-      "Precision (At Risk)": 0.997259591429995,
-      "Recall (At Risk)": 0.9911850641311345,
-      "F1 (At Risk)": 0.9942130492015001,
-      "Accuracy": 0.9970648257791439
+      "AUC-ROC": 0.8867577486975466,
+      "Precision (At Risk)": 0.909047656807549,
+      "Recall (At Risk)": 0.5677214876442331,
+      "F1 (At Risk)": 0.6989391537617363,
+      "Accuracy": 0.8755889244413091
     },
     {
       "Model": "Gradient Boosting",
-      "AUC-ROC": 0.9998184509966918,
-      "Precision (At Risk)": 0.997751798561151,
-      "Recall (At Risk)": 0.9890060912197296,
-      "F1 (At Risk)": 0.9933596955905394,
-      "Accuracy": 0.9966365170945555
+      "AUC-ROC": 0.8539905121946025,
+      "Precision (At Risk)": 0.8961388527937627,
+      "Recall (At Risk)": 0.47813598771851634,
+      "F1 (At Risk)": 0.623567022959925,
+      "Accuracy": 0.8531531077574261
     },
     {
       "Model": "Logistic Regression",
-      "AUC-ROC": 0.9148412350209386,
-      "Precision (At Risk)": 0.6633616055429459,
-      "Recall (At Risk)": 0.8249888575248848,
-      "F1 (At Risk)": 0.735399284862932,
-      "Accuracy": 0.848983396739815
+      "AUC-ROC": 0.7304880874271419,
+      "Precision (At Risk)": 0.45056983832494035,
+      "Recall (At Risk)": 0.5893131283117912,
+      "F1 (At Risk)": 0.510685778044803,
+      "Accuracy": 0.712730845783679
     }
   ],
   "feature_importances": {
-    "SurplusMargin": 0.32524331957743763,
-    "RevenueGrowthPct": 0.17496498882740785,
-    "OperatingReserveMonths": 0.17386264458496412,
-    "NetAssetGrowthPct": 0.11181663861581788,
-    "DebtRatio": 0.0794213584093883,
-    "LogAssets": 0.0261702395239894,
-    "ContributionGrowthPct": 0.02211217244711912,
-    "ExpenseGrowthPct": 0.016629194822200696,
-    "AssetLiabilityRatio": 0.013718381669757664,
-    "InvestmentRevenuePct": 0.011361498435760222,
-    "GrantDependencyPct": 0.00583457806718108,
-    "OrgAge": 0.005289829989517032,
-    "SalaryRatio": 0.005172874298753332,
-    "ProgramRevenuePct": 0.005022867668537407,
-    "LogRevenue": 0.004954221684849935,
-    "Employees": 0.004482158041226793,
-    "GovGrantPct": 0.003681443905722233,
-    "ProgramExpenseRatio": 0.003528209139928855,
-    "FundraisingRatio": 0.003254235201814056,
-    "NTEE_B": 0.0003895280497680134
+    "DebtRatio": 0.1758454463410953,
+    "ContributionGrowthPct": 0.1329647538037085,
+    "LogAssets": 0.0999080760289557,
+    "ExpenseGrowthPct": 0.07096057148083079,
+    "AssetLiabilityRatio": 0.06992122970413668,
+    "InvestmentRevenuePct": 0.05646765168722816,
+    "LogRevenue": 0.0531827523200571,
+    "GrantDependencyPct": 0.0458837925880088,
+    "ProgramRevenuePct": 0.04509481311368109,
+    "SalaryRatio": 0.044019696047739,
+    "OrgAge": 0.04297064630609063,
+    "ProgramExpenseRatio": 0.039483694121353524,
+    "Employees": 0.036389950642302424,
+    "FundraisingRatio": 0.02551303400495018,
+    "GovGrantPct": 0.023245777578543507,
+    "NTEE_B": 0.004039269856202596,
+    "NTEE_P": 0.003556348185636966,
+    "NTEE_E": 0.003441235127412296,
+    "NTEE_L": 0.0028083444898359946,
+    "NTEE_A": 0.002552592553367644
   }
 }
