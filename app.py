@@ -967,6 +967,11 @@ def gems_page() -> None:
 
     st.markdown(f"**Showing {len(filtered):,} organizations** matching your filters")
 
+    # Session state for selected org (drives breakdown panel + table highlight)
+    if "gems_selected_org" not in st.session_state:
+        st.session_state.gems_selected_org = None
+    selected_name = st.session_state.gems_selected_org
+
     # Top gems cards
     if len(filtered) > 0:
         top_gems = filtered.nlargest(6, "ImpactEfficiencyScore")
@@ -980,9 +985,11 @@ def gems_page() -> None:
                     if gem["DonationToStabilize"] == 0
                     else f'{_fmt_dollars(gem["DonationToStabilize"])} to reach 6-month reserves'
                 )
-
+                is_card_selected = selected_name == gem["OrgName"]
+                card_border = "2px solid #3b82f6" if is_card_selected else "1px solid #e5e7eb"
+                card_bg = "#f0f7ff" if is_card_selected else "#fafbfc"
                 st.markdown(
-                    f"""<div style="background:#fafbfc; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:12px">
+                    f"""<div style="background:{card_bg}; border:{card_border}; border-radius:12px; padding:16px; margin-bottom:4px">
                     <div style="font-weight:700; font-size:1rem; color:#1a2332; margin-bottom:4px">{gem['OrgName'][:50]}</div>
                     <div style="font-size:0.8rem; color:#6b7280; margin-bottom:10px">{gem.get('City', '')} {gem['State']} · {gem['Sector']}</div>
                     <div style="display:flex; justify-content:space-between; margin-bottom:8px">
@@ -993,6 +1000,100 @@ def gems_page() -> None:
                     </div>""",
                     unsafe_allow_html=True,
                 )
+                btn_label = "✕ Close Breakdown" if is_card_selected else "📊 Score Breakdown"
+                if st.button(btn_label, key=f"gem_btn_{i}", use_container_width=True):
+                    st.session_state.gems_selected_org = None if is_card_selected else gem["OrgName"]
+                    st.rerun()
+
+    # Score breakdown panel — shown whenever an org is selected
+    selected_name = st.session_state.get("gems_selected_org")
+    if selected_name:
+        sel_rows = filtered[filtered["OrgName"] == selected_name]
+        if len(sel_rows) == 0:
+            # Org exists in dataset but not in current filter — widen search
+            sel_rows = gems[gems["OrgName"] == selected_name]
+        if len(sel_rows) > 0:
+            sel = sel_rows.iloc[0]
+            prog = sel.get("ProgramExpenseRatio", np.nan)
+            growth = sel.get("RevenueGrowthPct", np.nan)
+            resilience = sel.get("ResilienceScore", np.nan)
+            reserves = sel.get("OperatingReserveMonths", np.nan)
+
+            def _sc(val: float | None, good_thresh: float, warn_thresh: float) -> str:
+                if val is None or (isinstance(val, float) and np.isnan(val)):
+                    return "#9ca3af"
+                return "#22c55e" if val >= good_thresh else "#f59e0b" if val >= warn_thresh else "#ef4444"
+
+            prog_color = _sc(prog, 0.75, 0.60)
+            growth_color = _sc(growth, 0.05, 0.0)
+            res_color = _sc(resilience, 70, 40)
+
+            components_html = "".join([
+                f"""<div style="display:flex; align-items:flex-start; gap:14px; padding:10px 0; border-bottom:1px solid #f3f4f6">
+                  <div style="min-width:52px; text-align:center; padding-top:2px">
+                    <div style="font-size:1.05rem; font-weight:700; color:{color}">{weight}%</div>
+                    <div style="font-size:0.7rem; color:#9ca3af">weight</div>
+                  </div>
+                  <div style="flex:1">
+                    <div style="font-weight:600; color:#1a2332; font-size:0.9rem">{label}
+                      <span style="font-weight:400; color:#6b7280; font-size:0.82rem">&nbsp;→&nbsp;{value}</span>
+                    </div>
+                    <div style="font-size:0.8rem; color:#6b7280; margin-top:2px">{detail}</div>
+                    <div style="font-size:0.75rem; color:{color}; margin-top:2px">📌 {benchmark}</div>
+                  </div>
+                </div>"""
+                for label, weight, value, detail, benchmark, color in [
+                    (
+                        "Program Spending Efficiency", 25,
+                        f"{prog:.1%}" if pd.notna(prog) else "N/A",
+                        "Share of every dollar that goes directly to programs and services",
+                        "75%+ is the industry standard — higher is better",
+                        prog_color,
+                    ),
+                    (
+                        "Revenue Growth", 20,
+                        f"{growth:+.1%}" if pd.notna(growth) else "N/A",
+                        "Year-over-year change in total revenue",
+                        "Positive growth signals expanding capacity to serve the community",
+                        growth_color,
+                    ),
+                    (
+                        "Program Leverage", 20,
+                        "Derived",
+                        "Program spending generated per dollar of contributions received",
+                        "Higher leverage = more mission output per donor dollar (percentile-ranked vs. peers)",
+                        "#3b82f6",
+                    ),
+                    (
+                        "Community Reach", 15,
+                        "Derived",
+                        "Total staff and volunteers relative to organization size (per $1M revenue)",
+                        "More people engaged per dollar = broader community footprint (percentile-ranked vs. peers)",
+                        "#3b82f6",
+                    ),
+                    (
+                        "Financial Sustainability", 20,
+                        f"{resilience:.0f}/100" if pd.notna(resilience) else "N/A",
+                        f"Composite resilience score — reserve runway: {reserves:.1f} months" if pd.notna(reserves) else "Composite resilience score based on reserves, margins, and debt",
+                        "70+ is healthy; below 40 indicates elevated financial risk",
+                        res_color,
+                    ),
+                ]
+            ])
+
+            st.markdown(
+                f"""<div style="background:#f8f9fc; border:1px solid #dde2ec; border-radius:12px; padding:20px; margin:8px 0 20px 0">
+                  <div style="font-size:1.05rem; font-weight:700; color:#1a2332; margin-bottom:2px">Score Breakdown — {sel['OrgName']}</div>
+                  <div style="font-size:0.82rem; color:#6b7280; margin-bottom:14px">
+                    Each factor is percentile-ranked against all organizations in the dataset, then combined using the weights below to produce the 0–100 Impact Efficiency Score.
+                  </div>
+                  {components_html}
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            if st.button("✕ Clear selection", key="gems_clear_sel"):
+                st.session_state.gems_selected_org = None
+                st.rerun()
 
     # Scatter plot
     st.markdown('<div class="section-header">Budget vs. Impact Efficiency</div>', unsafe_allow_html=True)
@@ -1030,7 +1131,22 @@ def gems_page() -> None:
             margin=dict(t=10),
             height=500,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Click any point to select an organization and see its score breakdown highlighted in the table below.")
+        chart_event = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode="points")
+        if chart_event and chart_event.selection and chart_event.selection.points:
+            pt = chart_event.selection.points[0]
+            sel_x = pt.get("x")
+            sel_y = pt.get("y")
+            if sel_x is not None and sel_y is not None:
+                match = plot_df[
+                    (plot_df["TotalRevenueCY"] == sel_x)
+                    & (abs(plot_df["ImpactEfficiencyScore"] - sel_y) < 0.01)
+                ]
+                if len(match) > 0:
+                    new_org = match.iloc[0]["OrgName"]
+                    if st.session_state.get("gems_selected_org") != new_org:
+                        st.session_state.gems_selected_org = new_org
+                        st.rerun()
 
     # Full table
     st.markdown('<div class="section-header">Full List</div>', unsafe_allow_html=True)
@@ -1051,8 +1167,22 @@ def gems_page() -> None:
         "DonationToStabilize": "Donation to Stabilize",
     }
     display = filtered[table_cols].rename(columns=rename_map).head(300)
+
+    # If an org is selected, float it to the top of the table
+    selected_name = st.session_state.get("gems_selected_org")
+    if selected_name:
+        is_sel = display["Organization"] == selected_name
+        display = pd.concat([display[is_sel], display[~is_sel]], ignore_index=True)
+
+    def _highlight_selected_row(row: pd.Series) -> list[str]:
+        if selected_name and row["Organization"] == selected_name:
+            return ["background-color: #fef3c7; font-weight: bold"] * len(row)
+        return [""] * len(row)
+
     st.dataframe(
-        display.style.format(
+        display.style
+        .apply(_highlight_selected_row, axis=1)
+        .format(
             {
                 "Annual Revenue": "${:,.0f}",
                 "Impact Score": "{:.0f}",
