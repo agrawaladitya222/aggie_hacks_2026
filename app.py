@@ -274,6 +274,8 @@ def executive_page(df: pd.DataFrame) -> None:
         lambda r: f"{r['State']}: Score {r['AvgResilience']:.0f} | {r['AtRiskPct']:.0%} at risk | {r['Count']:,} orgs",
         axis=1,
     )
+    score_min = max(state_avg["AvgResilience"].min() - 2, 50)
+    score_max = min(state_avg["AvgResilience"].max() + 2, 100)
     choropleth = px.choropleth(
         state_avg,
         locations="State",
@@ -281,6 +283,7 @@ def executive_page(df: pd.DataFrame) -> None:
         color="AvgResilience",
         scope="usa",
         color_continuous_scale="RdYlGn",
+        range_color=(score_min, score_max),
         hover_name="Label",
         labels={"AvgResilience": "Avg. Resilience Score"},
     )
@@ -941,14 +944,15 @@ def gems_page() -> None:
         sector_options = ["All Sectors"] + sorted(gems["Sector"].dropna().unique().tolist())
         sel_sector = st.selectbox("Sector", sector_options, key="gems_sector")
     with col_f3:
-        max_donation = st.slider(
-            "Max donation to stabilize",
+        donation_max = int(gems["DonationToStabilize"].quantile(0.95))
+        min_donation, max_donation = st.slider(
+            "Donation to stabilize range",
             min_value=0,
-            max_value=int(gems["DonationToStabilize"].quantile(0.95)),
-            value=int(gems["DonationToStabilize"].quantile(0.95)),
+            max_value=donation_max,
+            value=(0, donation_max),
             step=10000,
             format="$%d",
-            help="Filter to organizations where a smaller donation could bring reserves to 6 months.",
+            help="Filter to organizations whose required stabilization donation falls within this range.",
         )
 
     filtered = gems.copy()
@@ -956,7 +960,10 @@ def gems_page() -> None:
         filtered = filtered[filtered["State"] == sel_state]
     if sel_sector != "All Sectors":
         filtered = filtered[filtered["Sector"] == sel_sector]
-    filtered = filtered[filtered["DonationToStabilize"] <= max_donation]
+    filtered = filtered[
+        (filtered["DonationToStabilize"] >= min_donation)
+        & (filtered["DonationToStabilize"] <= max_donation)
+    ]
 
     st.markdown(f"**Showing {len(filtered):,} organizations** matching your filters")
 
