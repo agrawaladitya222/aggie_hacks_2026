@@ -1,0 +1,61 @@
+{
+  "best_model": "Random Forest",
+  "cv_auc_mean": 0.9999999332339314,
+  "cv_auc_std": 5.056240858692944e-08,
+  "all_models": [
+    {
+      "Model": "Random Forest",
+      "AUC-ROC": 0.999999914240544,
+      "Precision (At Risk)": 0.9997524262230144,
+      "Recall (At Risk)": 0.9999009557767543,
+      "F1 (At Risk)": 0.9998266854836713,
+      "Accuracy": 0.9999118188002318
+    },
+    {
+      "Model": "XGBoost",
+      "AUC-ROC": 0.9999658907451454,
+      "Precision (At Risk)": 0.997259591429995,
+      "Recall (At Risk)": 0.9911850641311345,
+      "F1 (At Risk)": 0.9942130492015001,
+      "Accuracy": 0.9970648257791439
+    },
+    {
+      "Model": "Gradient Boosting",
+      "AUC-ROC": 0.9998184509966918,
+      "Precision (At Risk)": 0.997751798561151,
+      "Recall (At Risk)": 0.9890060912197296,
+      "F1 (At Risk)": 0.9933596955905394,
+      "Accuracy": 0.9966365170945555
+    },
+    {
+      "Model": "Logistic Regression",
+      "AUC-ROC": 0.9148412350209386,
+      "Precision (At Risk)": 0.6633616055429459,
+      "Recall (At Risk)": 0.8249888575248848,
+      "F1 (At Risk)": 0.735399284862932,
+      "Accuracy": 0.848983396739815
+    }
+  ],
+  "feature_importances": {
+    "SurplusMargin": 0.32524331957743763,
+    "RevenueGrowthPct": 0.17496498882740785,
+    "OperatingReserveMonths": 0.17386264458496412,
+    "NetAssetGrowthPct": 0.11181663861581788,
+    "DebtRatio": 0.0794213584093883,
+    "LogAssets": 0.0261702395239894,
+    "ContributionGrowthPct": 0.02211217244711912,
+    "ExpenseGrowthPct": 0.016629194822200696,
+    "AssetLiabilityRatio": 0.013718381669757664,
+    "InvestmentRevenuePct": 0.011361498435760222,
+    "GrantDependencyPct": 0.00583457806718108,
+    "OrgAge": 0.005289829989517032,
+    "SalaryRatio": 0.005172874298753332,
+    "ProgramRevenuePct": 0.005022867668537407,
+    "LogRevenue": 0.004954221684849935,
+    "Employees": 0.004482158041226793,
+    "GovGrantPct": 0.003681443905722233,
+    "ProgramExpenseRatio": 0.003528209139928855,
+    "FundraisingRatio": 0.003254235201814056,
+    "NTEE_B": 0.0003895280497680134
+  }
+}

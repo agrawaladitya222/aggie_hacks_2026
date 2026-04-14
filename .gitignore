@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Local environments
+.venv/
+venv/
+.env
+
+# Generated ML artifacts (rebuild with `python run_all.py`)
+artifacts/*.joblib
+artifacts/*.pkl
+artifacts/*.bin
+
+# Generated pipeline outputs (rebuild with `python run_all.py`)
+data/master_990.csv
+data/simulation_results.csv
+data/hidden_gems.csv
+data/peer_group_stats.csv
+outputs/*
+!outputs/.gitkeep
+
+# Keep raw input data under version control
+!data/data_csv/
