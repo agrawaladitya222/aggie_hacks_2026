@@ -1418,7 +1418,7 @@ def main() -> None:
         "data-driven decisions."
     )
     st.sidebar.markdown(
-        f"*{len(df):,} organizations · {int(df['State'].nunique())} states*"
+        f"*{len(df):,} records · {int(df['State'].nunique())} states & territories*"
     )
 
     if page == "Executive Overview":
