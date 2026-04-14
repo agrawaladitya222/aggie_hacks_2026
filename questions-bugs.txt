@@ -1,0 +1,15 @@
+1. Text in the navigation options is hard to ready (currently grey text against a dark blue background)
+2. The search functionality in the peer benchmarking does not list all options (seems to only list options 
+    alphabetically up till the letter A). We should include all the Organizations.
+3. In the stress test simulator, for all the scenarios listed, we see an orange impact banner that tells 
+    us "under this scenario what percent of non profits would face serious financial distress". But for some reason, 
+    this banner is not visible for the "Investment Shock (~40% option)"
+4. In the peer benchmarking tab, for some Organizations (like '1 Archangel Services Inc) we see the score as nan/100. 
+    Is this a bug? If not, why does this happen?
+5. Some of the axes in the spider chart within the peer benchmarking tab are a little counterintuitive. For example,
+    a high debt to asset ratio is seen as a bad thing. However, according to the spider chart, if a company has a higher 
+    than normal debt to asset ratio, the blue line for that axis appears bigger than the median, which to me seems misleading.
+    Is this normal? Intuitively it feels like if the blue line (the line for the specific company we are looking at) is
+    bigger than the median grey line, it means the current company is doing better than the median company. This is both 
+    the case for 'debt-to-asset ratio' and 'fundraising cost'. When the current company is better than the median, the
+    blue line is smaller, and if the current company is worse than the median, the blue line is bigger. 

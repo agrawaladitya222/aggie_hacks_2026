@@ -54,6 +54,14 @@ section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3 {
     color: #ffffff !important;
 }
+/* ---- Sidebar radio button navigation text ---- */
+section[data-testid="stSidebar"] [data-testid="stRadio"] label p,
+section[data-testid="stSidebar"] [data-testid="stRadio"] label span,
+section[data-testid="stSidebar"] [data-baseweb="radio"] label,
+section[data-testid="stSidebar"] div[role="radiogroup"] label,
+section[data-testid="stSidebar"] div[role="radiogroup"] p {
+    color: #ffffff !important;
+}
 
 /* ---- Insight callout boxes ---- */
 .insight-box {
@@ -340,7 +348,7 @@ def peer_page(df: pd.DataFrame) -> None:
         "(same sector, size, and state). See where it excels and where it needs improvement."
     )
 
-    org_names = sorted(df["OrgName"].dropna().unique())[:5000]
+    org_names = sorted(df["OrgName"].dropna().unique().tolist())
     org = st.selectbox(
         "Search for an organization",
         org_names,
@@ -367,9 +375,11 @@ def peer_page(df: pd.DataFrame) -> None:
             f"**Peer group:** {peer_df.shape[0]:,} similar organizations"
         )
     with col_score:
+        score_val = row["ResilienceScore"]
+        score_display = f"{score_val:.0f}" if pd.notna(score_val) else "N/A"
         st.markdown(
             f'<div style="text-align:center">'
-            f'<span style="font-size:2.4rem; font-weight:700; color:#1a2332">{row["ResilienceScore"]:.0f}</span>'
+            f'<span style="font-size:2.4rem; font-weight:700; color:#1a2332">{score_display}</span>'
             f'<span style="font-size:1rem; color:#6b7280">/100</span><br/>'
             f'<span class="health-badge {css_class}">{label}</span>'
             f"</div>",
@@ -387,17 +397,26 @@ def peer_page(df: pd.DataFrame) -> None:
     friendly = [FRIENDLY_METRIC_NAMES[m] for m in metrics]
     med = peer_df[metrics].median()
 
-    def _normalize(vals, meds, names):
+    # Metrics where a LOWER value is better (invert so the radar chart reads intuitively:
+    # a larger spoke = doing better than peers, smaller spoke = doing worse).
+    LOWER_IS_BETTER = {"FundraisingRatio", "DebtRatio"}
+
+    def _normalize(vals, meds, metric_names):
         normed_vals = []
         normed_meds = []
-        for v, m, n in zip(vals, meds, names):
+        for v, m, mn in zip(vals, meds, metric_names):
             ref = max(abs(m), 0.001)
-            normed_vals.append(v / ref)
+            if mn in LOWER_IS_BETTER:
+                # Invert: org value below median → spoke extends beyond 1.0 (better)
+                normed = max(0.0, 2.0 - v / ref)
+            else:
+                normed = v / ref
+            normed_vals.append(normed)
             normed_meds.append(1.0)
         return normed_vals, normed_meds
 
     vals = [row[m] for m in metrics]
-    nv, nm = _normalize(vals, [med[m] for m in metrics], friendly)
+    nv, nm = _normalize(vals, [med[m] for m in metrics], metrics)
 
     st.markdown('<div class="section-header">How Does This Organization Compare?</div>', unsafe_allow_html=True)
 
@@ -671,16 +690,15 @@ def simulation_page(sims: pd.DataFrame) -> None:
     critical_pct = status_counts.get("Critical (<3mo reserves)", 0) / total if total else 0
     at_risk_pct = status_counts.get("At Risk (3-12mo reserves)", 0) / total if total else 0
     combined_danger = critical_pct + at_risk_pct
-    if combined_danger > 0.1:
-        st.markdown(
-            f'<div class="insight-box-warn">'
-            f"<strong>Impact:</strong> Under this scenario, <strong>{combined_danger:.1%}</strong> of nonprofits "
-            f"would face serious financial distress (critical or at risk). That's roughly "
-            f"<strong>{int(round(combined_danger * total)):,}</strong> organizations that could struggle to "
-            f"maintain services."
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        f'<div class="insight-box-warn">'
+        f"<strong>Impact:</strong> Under this scenario, <strong>{combined_danger:.1%}</strong> of nonprofits "
+        f"would face serious financial distress (critical or at risk). That's roughly "
+        f"<strong>{int(round(combined_danger * total)):,}</strong> organizations that could struggle to "
+        f"maintain services."
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     # Status distribution chart
     col_pie, col_bar = st.columns(2)
