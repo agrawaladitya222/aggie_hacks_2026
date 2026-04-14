@@ -24,7 +24,7 @@
 
 ## 1. Executive Summary
 
-**Goal:** Build an end-to-end analytics solution that uses IRS **Form 990** (standard full form) data for tax years **2019–2025** (seven years, inclusive) to help nonprofit leaders, funders, and capacity builders answer three questions:
+**Goal:** Build an end-to-end analytics solution that uses IRS **Form 990** (standard full form) data spanning **tax years 2018–2024** (seven years) to help nonprofit leaders, funders, and capacity builders answer three questions:
 
 1. **Who is thriving?** — Identify financially durable nonprofits and the factors that make them resilient.
 2. **Who is at risk?** — Detect organizations vulnerable to funding shocks and identify intervention thresholds.
@@ -33,6 +33,8 @@
 The solution consists of four analytical modules (Peer Benchmarking, Resilience Prediction, Financial Risk Simulation, High-Impact Discovery) supported by a data pipeline and presented through an interactive dashboard.
 
 **Target User:** Fairlight Advisors and similar nonprofit capacity-building consultancies who advise funders on where to allocate philanthropic capital.
+
+**Current Starting Point:** Eight pre-parsed CSV files totaling ~362,000 rows (before deduplication) are already in `data/data_csv/`. Each file already includes an `NTEE_CD` column (sector classification codes) — no additional joining or XML parsing is needed. Additional 2024-era extract files may be added later and will be automatically picked up by the pipeline.
 
 ---
 
@@ -82,72 +84,97 @@ The U.S. nonprofit sector has hundreds of thousands of public charities. Despite
 
 ### 3.1 Source Files
 
-**Primary data** lives in `data/data_csv/` as one CSV per annual extract, parsed from IRS Form 990 XML (990 full form only — 990-EZ and 990-PF excluded). After concatenation and deduplication by `(EIN, TaxYear)`, the **target panel** is **`TaxYear` 2019–2025** (seven years, inclusive), aligned with the hackathon’s “seven years of Form 990 data” framing.
+**All data lives in `data/data_csv/`** as pre-parsed CSV files extracted from IRS Form 990 XML filings (990 full form only — 990-EZ and 990-PF excluded). Each file represents a single IRS bulk-download release batch. File names follow the pattern `YYYY_990.csv` or `YYYY_N_990.csv`, where `YYYY` is the IRS release year and `N` is the batch number within that release.
 
-| File | Rows (repo snapshot) | Notes |
-|------|----------------------|--------|
-| `2019_990.csv` | 5,308 | Present in repo |
-| `2020_990.csv` | 2,773 | Present in repo |
-| `2021_990.csv` | 24,374 | Present in repo |
-| `2022_990.csv` … `2025_990.csv` | — | Add as teammates land each year’s extract |
-| **Combined (before dedup)** | **32,455+** | Refresh totals when new files are added |
+**Important:** The IRS release year in the filename does *not* equal the tax year of the filings inside. Each file can contain filings spanning two to three different tax years. The pipeline concatenates all files and deduplicates by `(EIN, TaxYear)`.
 
-Individual extract files can contain overlapping `TaxYear` values; deduplication (Section 5.2) yields one row per org per `TaxYear` across the full **2019–2025** panel.
+| File | Rows | TaxYears Contained | Notes |
+|------|------|--------------------|-------|
+| `2019_990.csv` | 5,308 | 2016 (22), 2017 (2,843), 2018 (2,443) | Oldest batch |
+| `2020_990.csv` | 2,773 | 2017 (31), 2018 (2,654), 2019 (88) | Small batch |
+| `2021_990.csv` | 24,374 | 2018 (96), 2019 (10,632), 2020 (13,646) | |
+| `2022_1_990.csv` | 103,926 | 2018 (216), 2019 (26,653), 2020 (61,850), 2021 (15,207) | Largest single batch |
+| `2022_2_990.csv` | 14,401 | 2019 (131), 2020 (8,548), 2021 (5,722) | |
+| `2023_1_990.csv` | 104,159 | 2020 (1,189), 2021 (46,795), 2022 (56,175) | |
+| `2023_2_990.csv` | 3,787 | 2020 (21), 2021 (81), 2022 (3,685) | Small supplemental |
+| `2025_990.csv` | 103,456 | 2021 (9), 2022 (1,124), 2023 (37,754), 2024 (64,569) | Most recent; contains 2024 data |
+| **Total (pre-dedup)** | **362,184** | | |
+| **Total (post-dedup)** | **344,265** | **2016–2024** | After keeping latest filing per EIN+TaxYear |
 
-**Supplementary data** in `data/TEOS IRS Data/` contains IRS Tax Exempt Organization Search (TEOS) bulk files, used to look up `NTEE_CD` codes by EIN. The `ntee_col_addon.py` script joins these codes onto the primary CSVs.
+**Future additions:** Additional 2024 extract files may be added to `data/data_csv/` following the same naming convention. The pipeline's glob pattern (`data/data_csv/*_990.csv` or `data/data_csv/*990*.csv`) will automatically pick them up. No code changes should be needed.
 
-Additionally, ~17,000+ raw XML files exist in `2024_TEOS_XML_*` folders that can be parsed for 2022 data using the existing `parse_990.py` script if needed.
+### 3.2 Seven-Year Analysis Panel
 
-### 3.2 Data Structure
+The hackathon calls for "seven years of Form 990 data." After concatenation and dedup, we filter to **TaxYear 2018–2024** — the seven most recent years with meaningful data volume:
 
-Each row = one nonprofit (identified by EIN) for one tax year. Key: every row contains **Current Year (CY)** and **Prior Year (PY)** figures, effectively giving two years of data per filing.
+| TaxYear | Rows (post-dedup) |
+|---------|-------------------|
+| 2018 | 5,343 |
+| 2019 | 30,192 |
+| 2020 | 76,698 |
+| 2021 | 67,097 |
+| 2022 | 60,418 |
+| 2023 | 37,409 |
+| 2024 | 64,214 |
+| **Total** | **~341,371** |
 
-**Form Type Focus:** We use only the standard **Form 990** (full form). 990-EZ (short form) and 990-PF (private foundations) are excluded per the problem statement scope.
+TaxYears 2016 (22 rows) and 2017 (2,872 rows) are excluded from the analysis panel due to very low coverage but are retained in the raw load for completeness.
 
-**Unique EINs:** ~30,305 total
-- 28,251 EINs appear in only 1 tax year
-- 1,986 EINs appear in 2 tax years
-- 68 EINs appear in 3+ tax years
+**Note on volume imbalance:** TaxYear 2018 has far fewer filings (~5K) than other years (~30–77K). This is because the 2018 tax-year filings were captured by fewer IRS release batches in our dataset. Keep this in mind during temporal analyses — 2018 is useful for trend context but should not be weighted equally.
 
-**Geographic Coverage:** 56 states/territories. Top states: CA (3,542), NY (2,795), TX (1,687), PA (1,615), FL (1,442).
+### 3.3 Data Structure
 
-**NTEE Code Coverage:** Each CSV includes an `NTEE_CD` column joined from the IRS TEOS (Tax Exempt Organization Search) bulk files via the `ntee_col_addon.py` script. Coverage by file:
+Each row = one nonprofit (identified by EIN) for one tax year. Every row contains **Current Year (CY)** and **Prior Year (PY)** figures as reported on the Form 990, effectively giving two years of financial data per filing.
+
+**37 columns** in each CSV (see [Appendix](#13-appendix-column-data-dictionary) for full definitions). All files share the same schema.
+
+### 3.4 Key Data Statistics (post-dedup, full panel)
+
+| Metric | Min | Median | Mean | Max |
+|--------|-----|--------|------|-----|
+| TotalRevenueCY | $1.0M | $3.1M | $7.7M | $80.0M |
+| TotalExpensesCY | -$353M | $2.7M | $7.1M | $1.38B |
+| ContributionsGrantsCY | -$3.5M | $1.1M | $3.1M | $80.4M |
+| TotalAssetsEOY | -$98.1M | $4.5M | $20.1M | $10.1B |
+| NetAssetsEOY | -$1.30B | $2.9M | $11.9M | $10.1B |
+| Employees | 0 | 23 | 85 | 999,999 |
+
+**Data quality flags visible in these stats:**
+- **Negative TotalExpensesCY** and negative asset values exist → need to handle in cleaning (see Module 1, Step 3).
+- **Employees max = 999,999** → sentinel/placeholder value → cap or null out during cleaning.
+- **GovernmentGrantsAmt** is null for a large fraction of rows — expected since not all nonprofits receive government grants (fill with 0).
+
+### 3.5 NTEE Code Coverage
+
+Every CSV already includes an `NTEE_CD` column (sector classification codes pre-joined from IRS TEOS data). No additional NTEE lookup or joining step is needed.
 
 | File | NTEE Match Rate |
 |------|-----------------|
 | `2019_990.csv` | 4,152 / 5,308 (78.2%) |
 | `2020_990.csv` | 2,149 / 2,773 (77.5%) |
 | `2021_990.csv` | 16,528 / 24,374 (67.8%) |
+| `2022_1_990.csv` | 71,916 / 103,926 (69.2%) |
+| `2022_2_990.csv` | 9,963 / 14,401 (69.2%) |
+| `2023_1_990.csv` | 73,108 / 104,159 (70.2%) |
+| `2023_2_990.csv` | 2,650 / 3,787 (70.0%) |
+| `2025_990.csv` | 74,957 / 103,456 (72.5%) |
+| **Combined** | **255,423 / 362,184 (70.5%)** |
 
-For the ~25% of records without an NTEE code, we fall back to Mission-text classification (see Module 2, Section 6.2).
+For the ~30% of records without an NTEE code, we use Mission-text keyword classification as a fallback (see Module 2, Section 6.2).
 
-### 3.3 Raw Column Inventory (37 columns)
+### 3.6 Entity Coverage Summary
 
-See [Appendix](#13-appendix-column-data-dictionary) for full definitions. The columns group into:
+- **135,062 unique EINs** across the full dataset
+- **59 states/territories** represented
+- **Top 5 states:** CA (38,726), NY (29,356), TX (19,201), PA (16,767), FL (16,072)
+- **EIN multi-year appearances:**
+  - 1 year only: 32,888 EINs (24%)
+  - 2 years: 30,715 EINs (23%)
+  - 3 years: 40,326 EINs (30%)
+  - 4 years: 27,067 EINs (20%)
+  - 5+ years: 4,066 EINs (3%)
 
-| Category | Columns |
-|----------|---------|
-| **Identity** | EIN, OrgName, State, City, ZIP, TaxYear, TaxPeriodEnd, FormType, FormationYr, Mission |
-| **Classification** | NTEE_CD |
-| **Workforce** | Employees, Volunteers |
-| **Revenue** | GrossReceipts, TotalRevenueCY/PY, ContributionsGrantsCY/PY, ProgramServiceRevCY/PY, InvestmentIncomeCY, OtherRevenueCY, GovernmentGrantsAmt |
-| **Expenses** | TotalExpensesCY/PY, SalariesCY, FundraisingExpCY, ProgramSvcExpenses |
-| **Net** | NetRevenueCY/PY |
-| **Balance Sheet** | TotalAssetsEOY/BOY, TotalLiabilitiesEOY/BOY, NetAssetsEOY/BOY |
-| **Meta** | SourceFile |
-
-### 3.4 Key Data Statistics (2020 file sample)
-
-| Metric | Min | Median | Mean | Max |
-|--------|-----|--------|------|-----|
-| TotalRevenueCY | $1.0M | $3.3M | $7.8M | $80.0M |
-| TotalExpensesCY | $10.6K | $3.1M | $7.3M | $96.5M |
-| ContributionsGrantsCY | $0 | $1.3M | $3.3M | $78.5M |
-| TotalAssetsEOY | $0 | $4.1M | $15.8M | $1.66B |
-| NetAssetsEOY | -$967M | $2.5M | $10.0M | $1.08B |
-| Employees | 0 | 45 | 120 | 6,397 |
-
-**GovernmentGrantsAmt** is null for 46% of rows (1,282 of 2,773 in 2020 file) — this is expected since not all nonprofits receive government grants.
+**Implication for modeling:** ~73% of EINs appear in 2+ years, providing meaningful longitudinal signal for trend features (revenue growth, net asset change). The 24% with only 1 year of data can still be analyzed cross-sectionally but will lack CY vs. PY intra-filing growth metrics for validation across filings.
 
 ---
 
@@ -169,6 +196,8 @@ See [Appendix](#13-appendix-column-data-dictionary) for full definitions. The co
 └────────┘ └────────┘ └────────────┘ └────────────┘ └──────────┘
 ```
 
+**Dependencies:** Module 1 must run first. Modules 2–4 depend on Module 1 output and can be developed in parallel. Module 5 depends on Module 3 (uses the ResilienceScore). Module 6 depends on all other modules.
+
 **Tech Stack:**
 - **Language:** Python 3.10+
 - **Data:** pandas, numpy
@@ -183,54 +212,84 @@ See [Appendix](#13-appendix-column-data-dictionary) for full definitions. The co
 
 ### 5.1 Purpose
 
-Load all CSV files (one per filing year), clean them, merge into a single master DataFrame, derive sector labels from the `NTEE_CD` column (with Mission-text fallback), and compute derived financial metrics that power all downstream modules.
+Load all CSV files from `data/data_csv/`, clean them, merge into a single master DataFrame, filter to the **2018–2024** analysis panel, derive sector labels from the pre-existing `NTEE_CD` column (with Mission-text fallback), and compute derived financial metrics that power all downstream modules.
 
-### 5.2 Step-by-Step Implementation
+### 5.2 Inputs & Outputs
+
+- **Input:** All `*990*.csv` files in `data/data_csv/` (currently 8 files, ~362K rows)
+- **Output:** `data/master_990.csv` — a single deduplicated, cleaned, feature-enriched CSV (~341K rows, ~55+ columns)
+
+### 5.3 Step-by-Step Implementation
 
 #### Step 1: Load and Concatenate CSVs
 
 ```python
 import pandas as pd
 import numpy as np
-
 import glob
 
-files = sorted(glob.glob('data/data_csv/*_990.csv'))
-df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+files = sorted(glob.glob('data/data_csv/*990*.csv'))
+print(f"Found {len(files)} files: {[f.split('/')[-1] for f in files]}")
+
+df = pd.concat([pd.read_csv(f, low_memory=False) for f in files], ignore_index=True)
+print(f"Combined: {len(df)} rows")
 ```
+
+**Why `*990*.csv`?** This glob pattern matches both `YYYY_990.csv` and `YYYY_N_990.csv` naming conventions, and will also pick up any future files following either pattern (e.g., `2024_1_990.csv`).
 
 #### Step 2: Deduplicate
 
-Some EIN+TaxYear combinations may appear in multiple CSV files (the files overlap on tax years). Keep the most recent filing:
+Some EIN+TaxYear combinations appear in multiple CSV files (the IRS release batches overlap on tax years). Keep the most recent filing:
 
 ```python
 df = df.sort_values('TaxPeriodEnd', ascending=False)
 df = df.drop_duplicates(subset=['EIN', 'TaxYear'], keep='first')
+print(f"After dedup: {len(df)} rows, {df['EIN'].nunique()} unique EINs")
 ```
 
-#### Step 3: Data Cleaning
+#### Step 3: Filter to Analysis Panel
 
 ```python
-# Convert TaxYear and FormationYr to integers
 df['TaxYear'] = pd.to_numeric(df['TaxYear'], errors='coerce').astype('Int64')
+
+# Keep 2018–2024 (seven-year panel)
+df = df[df['TaxYear'].between(2018, 2024)]
+print(f"After panel filter (2018–2024): {len(df)} rows")
+print(df['TaxYear'].value_counts().sort_index())
+```
+
+#### Step 4: Data Cleaning
+
+```python
 df['FormationYr'] = pd.to_numeric(df['FormationYr'], errors='coerce').astype('Int64')
 
-# Fill GovernmentGrantsAmt nulls with 0 (absence = no government grants)
+# GovernmentGrantsAmt: null means no government grants received
 df['GovernmentGrantsAmt'] = df['GovernmentGrantsAmt'].fillna(0)
 
 # Remove rows where TotalRevenueCY is null or zero (can't compute ratios)
 df = df[df['TotalRevenueCY'].notna() & (df['TotalRevenueCY'] != 0)]
 
-# Ensure no negative employees/volunteers
+# Cap clearly invalid Employees values (999999 = sentinel)
+df.loc[df['Employees'] > 50000, 'Employees'] = np.nan
 df['Employees'] = df['Employees'].clip(lower=0)
 df['Volunteers'] = df['Volunteers'].clip(lower=0)
+
+# Flag and handle negative TotalExpensesCY (data entry errors)
+neg_expenses_count = (df['TotalExpensesCY'] < 0).sum()
+print(f"Rows with negative TotalExpensesCY: {neg_expenses_count} — setting to NaN")
+df.loc[df['TotalExpensesCY'] < 0, 'TotalExpensesCY'] = np.nan
+
+# Remove rows with null TotalExpensesCY after correction (can't compute expense ratios)
+df = df[df['TotalExpensesCY'].notna() & (df['TotalExpensesCY'] > 0)]
+
+print(f"After cleaning: {len(df)} rows")
 ```
 
-#### Step 4: Compute Derived Features
+#### Step 5: Compute Derived Features
 
 These are the **engineered features** that power all four analytical modules. Each feature has a clear financial interpretation.
 
-##### 4a. Revenue Composition Ratios
+##### 5a. Revenue Composition Ratios
 
 These tell us *where the money comes from* — critical for understanding dependency risk.
 
@@ -252,7 +311,7 @@ df['GovGrantPct'] = df['GovernmentGrantsAmt'] / df['TotalRevenueCY']
 
 **Why these matter:** A nonprofit that gets 90% of revenue from one source is fragile. Revenue diversification is a key resilience indicator.
 
-##### 4b. Expense Efficiency Ratios
+##### 5b. Expense Efficiency Ratios
 
 These tell us *how well the money is spent*.
 
@@ -269,12 +328,11 @@ df['FundraisingRatio'] = df['FundraisingExpCY'] / df['TotalExpensesCY']
 df['SalaryRatio'] = df['SalariesCY'] / df['TotalExpensesCY']
 ```
 
-##### 4c. Financial Health Indicators
+##### 5c. Financial Health Indicators
 
 ```python
 # Surplus Margin: is the org running a surplus or deficit?
-# Positive = surplus, negative = deficit
-# Healthy range: 0% to 10%
+# Positive = surplus, negative = deficit. Healthy range: 0% to 10%
 df['SurplusMargin'] = df['NetRevenueCY'] / df['TotalRevenueCY']
 
 # Operating Reserve Months: how many months could the org survive
@@ -303,11 +361,12 @@ df['AssetLiabilityRatio'] = np.where(
 )
 ```
 
-##### 4d. Growth & Trend Metrics
+##### 5d. Growth & Trend Metrics
+
+These leverage the CY/PY (Current Year / Prior Year) pairs on each Form 990 filing.
 
 ```python
 # Revenue Growth: year-over-year change
-# Positive = growing, negative = shrinking
 df['RevenueGrowthPct'] = np.where(
     df['TotalRevenuePY'].abs() > 0,
     (df['TotalRevenueCY'] - df['TotalRevenuePY']) / df['TotalRevenuePY'].abs(),
@@ -336,12 +395,12 @@ df['NetAssetGrowthPct'] = np.where(
 )
 ```
 
-##### 4e. Organization Characteristics
+##### 5e. Organization Characteristics
 
 ```python
 # Organization Age
 df['OrgAge'] = df['TaxYear'] - df['FormationYr']
-df['OrgAge'] = df['OrgAge'].clip(lower=0)  # no negative ages
+df['OrgAge'] = df['OrgAge'].clip(lower=0)
 
 # Size Category based on total revenue
 df['SizeCategory'] = pd.cut(
@@ -357,70 +416,16 @@ df['RevenuePerEmployee'] = np.where(
     np.nan
 )
 
-# Sector from NTEE code (primary) with Mission-text fallback
-# See Section 6.2 for full NTEE_SECTOR_MAP and classify_sector_from_mission()
-df['Sector'] = df['NTEE_CD'].apply(sector_from_ntee)
-mask_no_sector = df['Sector'].isna()
-df.loc[mask_no_sector, 'Sector'] = df.loc[mask_no_sector, 'Mission'].apply(
-    classify_sector_from_mission
-)
-
-# NTEE major group as a categorical feature for modeling
-df['NTEEMajorGroup'] = df['NTEE_CD'].str[0].str.upper().where(df['NTEE_CD'].notna())
+# Log-transform skewed dollar amounts for modeling
+df['LogRevenue'] = np.log1p(df['TotalRevenueCY'].clip(lower=0))
+df['LogAssets'] = np.log1p(df['TotalAssetsEOY'].clip(lower=0))
 ```
 
-##### 4f. Clip Extreme Outliers
+##### 5f. Sector Classification (from pre-existing NTEE_CD)
+
+The `NTEE_CD` column is already present in every CSV. We map it to human-readable sector labels and fall back to Mission-text keywords for the ~30% of rows missing NTEE.
 
 ```python
-# Cap ratio features at reasonable bounds to prevent model distortion
-ratio_cols = [
-    'GrantDependencyPct', 'ProgramRevenuePct', 'InvestmentRevenuePct',
-    'GovGrantPct', 'ProgramExpenseRatio', 'FundraisingRatio', 'SalaryRatio',
-    'SurplusMargin', 'DebtRatio'
-]
-for col in ratio_cols:
-    df[col] = df[col].clip(-2, 2)  # allow some negative but cap extremes
-
-df['OperatingReserveMonths'] = df['OperatingReserveMonths'].clip(-120, 120)
-df['RevenueGrowthPct'] = df['RevenueGrowthPct'].clip(-5, 5)
-df['ExpenseGrowthPct'] = df['ExpenseGrowthPct'].clip(-5, 5)
-```
-
-#### Step 5: Save the Master Table
-
-```python
-df.to_csv('data/master_990.csv', index=False)
-print(f"Master table: {len(df)} rows, {len(df.columns)} columns")
-```
-
-### 5.3 Output
-
-A single `master_990.csv` file with ~30,000+ rows and ~55+ columns (37 original + ~18 engineered features including Sector, NTEEMajorGroup, and peer-group keys) that serves as input to all downstream modules.
-
----
-
-## 6. Module 2: Peer Benchmarking Framework
-
-### 6.1 Purpose
-
-Compare any nonprofit's financial health to a **meaningful peer group** — organizations that are similar enough that comparison is fair. This directly addresses the judging criterion: *"does the team define the baseline or peer nonprofits?"*
-
-### 6.2 Defining Peer Groups
-
-A peer group is defined by **three dimensions**:
-
-| Dimension | How We Segment | Rationale |
-|-----------|---------------|-----------|
-| **Sector** | NTEE major category (primary); Mission-text keyword fallback for the ~25% of orgs missing NTEE | Comparing a hospital to a food bank is meaningless |
-| **Size** | Revenue-based size buckets: <500K, 500K-1M, 1M-5M, 5M-10M, 10M-50M, 50M+ | A $50M org operates differently than a $500K org |
-| **Geography** | State-level grouping | Cost of living and funding landscapes vary by state |
-
-#### Step 1: Derive Sector from NTEE Code (Primary) with Mission-Text Fallback
-
-The `NTEE_CD` column (joined from IRS TEOS data) is available for ~70–78% of records. NTEE codes follow the format `<MajorGroup><SubGroup>` (e.g., `B42` = Education – Graduate/Professional, `E62` = Healthcare – Ambulatory). We use the **major group letter** to define broad sector categories, falling back to Mission-text keyword matching for records without an NTEE code.
-
-```python
-# NTEE major-group mapping (first character of NTEE code)
 NTEE_SECTOR_MAP = {
     'A': 'Arts, Culture & Humanities',
     'B': 'Education',
@@ -451,17 +456,10 @@ NTEE_SECTOR_MAP = {
 }
 
 def sector_from_ntee(ntee_code):
-    """Extract sector from the NTEE major-group letter."""
     if pd.isna(ntee_code) or len(str(ntee_code).strip()) == 0:
         return None
     return NTEE_SECTOR_MAP.get(str(ntee_code).strip()[0].upper(), 'Other')
 
-df['Sector'] = df['NTEE_CD'].apply(sector_from_ntee)
-```
-
-**Fallback for records without NTEE:** Use keyword matching on the `Mission` field to assign a sector when `NTEE_CD` is missing:
-
-```python
 def classify_sector_from_mission(mission):
     m = str(mission).lower()
     if any(w in m for w in ['school', 'education', 'student', 'university', 'college']):
@@ -487,20 +485,125 @@ def classify_sector_from_mission(mission):
     else:
         return 'Human Services'
 
-# Fill missing Sector from Mission text
+df['Sector'] = df['NTEE_CD'].apply(sector_from_ntee)
 mask_no_sector = df['Sector'].isna()
 df.loc[mask_no_sector, 'Sector'] = df.loc[mask_no_sector, 'Mission'].apply(
     classify_sector_from_mission
 )
+
+# NTEE major group as a categorical feature for modeling
+df['NTEEMajorGroup'] = df['NTEE_CD'].str[0].str.upper().where(df['NTEE_CD'].notna())
 ```
 
-**Why NTEE first?** NTEE codes are IRS-assigned standard classifications that are consistent, auditable, and recognized industry-wide. Using them produces peer groups that judges and Fairlight Advisors will immediately understand (e.g., "E-series = Healthcare"). The Mission-text fallback ensures full coverage for the minority of records missing NTEE data.
+##### 5g. Clip Extreme Outliers
+
+```python
+ratio_cols = [
+    'GrantDependencyPct', 'ProgramRevenuePct', 'InvestmentRevenuePct',
+    'GovGrantPct', 'ProgramExpenseRatio', 'FundraisingRatio', 'SalaryRatio',
+    'SurplusMargin', 'DebtRatio'
+]
+for col in ratio_cols:
+    df[col] = df[col].clip(-2, 2)
+
+df['OperatingReserveMonths'] = df['OperatingReserveMonths'].clip(-120, 120)
+df['RevenueGrowthPct'] = df['RevenueGrowthPct'].clip(-5, 5)
+df['ExpenseGrowthPct'] = df['ExpenseGrowthPct'].clip(-5, 5)
+```
+
+#### Step 6: Save the Master Table
+
+```python
+df.to_csv('data/master_990.csv', index=False)
+print(f"Master table: {len(df)} rows, {len(df.columns)} columns")
+print(f"TaxYear range: {df['TaxYear'].min()} – {df['TaxYear'].max()}")
+print(f"Unique EINs: {df['EIN'].nunique()}")
+```
+
+### 5.4 Validation Checklist (before moving to Module 2)
+
+Run these checks after building the master table to catch issues early:
+
+| # | Check | Expected | Action if Failed |
+|---|-------|----------|-----------------|
+| 1 | No duplicate (EIN, TaxYear) pairs | 0 duplicates | Re-run dedup |
+| 2 | All TaxYear values in 2018–2024 | True | Re-run filter |
+| 3 | All ratio columns between -2 and 2 | True | Re-run clipping |
+| 4 | Every row has a non-null Sector | True | Debug fallback logic |
+| 5 | TotalRevenueCY > 0 for all rows | True | Re-run cleaning filter |
+| 6 | TotalExpensesCY > 0 for all rows | True | Re-run cleaning filter |
+| 7 | Column count ≈ 55+ | True | Check feature engineering steps |
+| 8 | No Employees > 50,000 | True | Re-run sentinel cap |
+
+```python
+assert df.duplicated(subset=['EIN', 'TaxYear']).sum() == 0, "Duplicates found!"
+assert df['TaxYear'].between(2018, 2024).all(), "TaxYear out of range!"
+assert df['Sector'].notna().all(), "Missing Sector values!"
+assert (df['TotalRevenueCY'] > 0).all(), "Non-positive revenue rows!"
+assert (df['TotalExpensesCY'] > 0).all(), "Non-positive expense rows!"
+print("All validation checks passed.")
+```
+
+### 5.5 Output
+
+A single `data/master_990.csv` file with ~340,000 rows and ~55+ columns (37 original + ~18 engineered features) that serves as input to all downstream modules.
+
+---
+
+## 6. Module 2: Peer Benchmarking Framework
+
+### 6.1 Purpose
+
+Compare any nonprofit's financial health to a **meaningful peer group** — organizations that are similar enough that comparison is fair. This directly addresses the judging criterion: *"does the team define the baseline or peer nonprofits?"*
+
+### 6.2 Inputs & Outputs
+
+- **Input:** `data/master_990.csv` (output of Module 1)
+- **Output:** Updated master table with peer group IDs, Z-scores, and deviation flags; peer group summary statistics table
+
+### 6.3 Defining Peer Groups
+
+A peer group is defined by **three dimensions**:
+
+| Dimension | How We Segment | Rationale |
+|-----------|---------------|-----------|
+| **Sector** | NTEE major category (primary); Mission-text keyword fallback for the ~30% of orgs missing NTEE | Comparing a hospital to a food bank is meaningless |
+| **Size** | Revenue-based size buckets: <500K, 500K-1M, 1M-5M, 5M-10M, 10M-50M, 50M+ | A $50M org operates differently than a $500K org |
+| **Geography** | State-level grouping | Cost of living and funding landscapes vary by state |
+
+**Why NTEE first?** NTEE codes are IRS-assigned standard classifications that are consistent, auditable, and recognized industry-wide. Using them produces peer groups that judges and Fairlight Advisors will immediately understand (e.g., "E-series = Healthcare"). The Mission-text fallback (defined in Module 1, Step 5f) ensures full coverage.
+
+### 6.4 Step-by-Step Implementation
+
+#### Step 1: Load Master Table
+
+```python
+import pandas as pd
+import numpy as np
+
+df = pd.read_csv('data/master_990.csv', low_memory=False)
+```
 
 #### Step 2: Assign Peer Group ID
 
 ```python
-# Each org's peer group = Sector + SizeCategory + State
 df['PeerGroupID'] = df['Sector'] + '_' + df['SizeCategory'].astype(str) + '_' + df['State']
+print(f"Unique peer groups: {df['PeerGroupID'].nunique()}")
+```
+
+**Peer group size check:** If any peer group has fewer than 5 members, it's too small for meaningful percentile comparisons. Merge undersized groups by dropping the State dimension (Sector + Size only) or the Size dimension (Sector + State only) — whichever produces a larger group.
+
+```python
+peer_counts = df['PeerGroupID'].value_counts()
+small_groups = peer_counts[peer_counts < 5].index
+print(f"Peer groups with <5 members: {len(small_groups)}")
+
+# Fallback: use Sector + Size only for orgs in small peer groups
+df['PeerGroupID_Fallback'] = df['Sector'] + '_' + df['SizeCategory'].astype(str)
+df.loc[df['PeerGroupID'].isin(small_groups), 'PeerGroupID'] = (
+    df.loc[df['PeerGroupID'].isin(small_groups), 'PeerGroupID_Fallback']
+)
+df = df.drop(columns=['PeerGroupID_Fallback'])
 ```
 
 #### Step 3: Compute Peer Benchmarks
@@ -528,7 +631,6 @@ for metric in benchmark_metrics:
 #### Step 4: Flag Deviations
 
 ```python
-# Flag orgs that are >1.5 standard deviations from peer median
 for metric in benchmark_metrics:
     z_col = f'{metric}_ZScore'
     df[f'{metric}_Flag'] = np.where(
@@ -538,15 +640,32 @@ for metric in benchmark_metrics:
     )
 ```
 
-### 6.3 Output
+#### Step 5: Compute Peer Percentile Ranks
 
-- **Peer Group Summary Table:** For each peer group, median and IQR of all benchmark metrics.
-- **Individual Org Scorecard:** For any EIN, show where it stands vs. peers on every metric (percentile rank + flag).
-- **Top Performers List:** Orgs in the top 10% of their peer group on program efficiency + surplus margin.
+```python
+for metric in benchmark_metrics:
+    df[f'{metric}_PeerPctile'] = df.groupby('PeerGroupID')[metric].rank(pct=True)
+```
 
-### 6.4 Visualization
+#### Step 6: Save Updated Master Table
 
-- **Radar/Spider Chart:** Show one org's metrics vs. peer median across 6-8 dimensions.
+```python
+df.to_csv('data/master_990.csv', index=False)
+
+# Also save peer group summary stats as a separate reference table
+peer_summary = df.groupby('PeerGroupID')[benchmark_metrics].agg(['median', 'mean', 'std', 'count'])
+peer_summary.to_csv('data/peer_group_stats.csv')
+print(f"Peer stats saved: {len(peer_summary)} groups")
+```
+
+### 6.5 Output
+
+- **Updated `data/master_990.csv`** with peer group ID, Z-scores, deviation flags, and percentile ranks for every org.
+- **`data/peer_group_stats.csv`:** For each peer group, median, mean, std, and count for all benchmark metrics.
+
+### 6.6 Visualization (build during Module 6, but design now)
+
+- **Radar/Spider Chart:** Show one org's metrics vs. peer median across 6–8 dimensions.
 - **Box Plots:** Distribution of each metric within a peer group, with the selected org highlighted.
 - **Heatmap:** Peer group × metric showing which sectors/sizes are strongest/weakest.
 
@@ -558,9 +677,14 @@ for metric in benchmark_metrics:
 
 Build a predictive model/scoring system that identifies which nonprofits are most likely to remain financially stable during funding fluctuations. This is the **core ML component**.
 
-### 7.2 Defining "Resilience" (The Target Variable)
+### 7.2 Inputs & Outputs
 
-Since we don't have a direct "this org failed" label, we must **construct the target variable** from observable financial outcomes. We define resilience as a composite of observable financial health indicators:
+- **Input:** `data/master_990.csv` (with peer benchmarks from Module 2)
+- **Output:** Updated master table with `ResilienceScore` and `AtRisk` columns; trained model artifact saved as a joblib file; feature importance analysis
+
+### 7.3 Defining "Resilience" (The Target Variable)
+
+Since we don't have a direct "this org failed" label, we **construct the target variable** from observable financial outcomes. We define resilience through two complementary approaches:
 
 #### Approach A: Binary Classification — "At Risk" vs. "Stable"
 
@@ -606,9 +730,9 @@ df['ResilienceScore'] = (
 ).round(1)
 ```
 
-**Recommendation:** Use **both**. The Resilience Score is interpretable for the dashboard. The binary "At Risk" label is the ML classification target.
+**Use both.** The ResilienceScore is interpretable for the dashboard and presentation. The binary AtRisk label is the ML classification target.
 
-### 7.3 Feature Selection
+### 7.4 Feature Selection
 
 Features for the ML model (input variables — what the model uses to predict):
 
@@ -628,18 +752,13 @@ feature_cols = [
     'LogRevenue', 'LogAssets',
 ]
 
-# NTEE major group as one-hot encoded features (adds sector signal to the model)
-# Only used if NTEE coverage is sufficient; otherwise Sector (derived) can substitute
+# NTEE major group as one-hot encoded features
 ntee_dummies = pd.get_dummies(df['NTEEMajorGroup'], prefix='NTEE', dummy_na=False)
 feature_cols += list(ntee_dummies.columns)
 df = pd.concat([df, ntee_dummies], axis=1)
-
-# Log-transform skewed dollar amounts
-df['LogRevenue'] = np.log1p(df['TotalRevenueCY'].clip(lower=0))
-df['LogAssets'] = np.log1p(df['TotalAssetsEOY'].clip(lower=0))
 ```
 
-### 7.4 Exploratory Data Analysis (EDA) — Do This Before Modeling
+### 7.5 Exploratory Data Analysis (EDA) — Do This Before Modeling
 
 This step is critical for the judging criterion: *"What EDA led to this choice?"*
 
@@ -658,7 +777,7 @@ import seaborn as sns
 
 # Correlation heatmap
 plt.figure(figsize=(14, 10))
-corr = df[feature_cols].corr()
+corr = df[feature_cols[:19]].corr()  # exclude one-hot NTEE for readability
 sns.heatmap(corr, annot=True, fmt='.2f', cmap='RdBu_r', center=0)
 plt.title('Feature Correlation Matrix')
 plt.tight_layout()
@@ -676,7 +795,7 @@ plt.tight_layout()
 plt.savefig('outputs/eda_feature_vs_target.png')
 ```
 
-### 7.5 Model Training
+### 7.6 Model Training
 
 #### Step 1: Prepare Data
 
@@ -685,21 +804,17 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 
-# Drop rows with missing target
 model_df = df[df['AtRisk'].notna()].copy()
 
 X = model_df[feature_cols]
 y = model_df['AtRisk']
 
-# Impute missing values with median
 imputer = SimpleImputer(strategy='median')
 X_imputed = pd.DataFrame(imputer.fit_transform(X), columns=feature_cols, index=X.index)
 
-# Scale features (important for logistic regression; optional for tree models)
 scaler = StandardScaler()
 X_scaled = pd.DataFrame(scaler.fit_transform(X_imputed), columns=feature_cols, index=X.index)
 
-# Train/test split (80/20)
 X_train, X_test, y_train, y_test = train_test_split(
     X_scaled, y, test_size=0.2, random_state=42, stratify=y
 )
@@ -760,17 +875,15 @@ print(results_df.to_string())
 #### Step 3: Feature Importance Analysis
 
 ```python
-# Use the best-performing model (likely XGBoost or Random Forest)
 best_model = models['XGBoost']  # or whichever scored highest
 
-# Feature importance
 importances = pd.Series(
     best_model.feature_importances_, index=feature_cols
 ).sort_values(ascending=False)
 
 plt.figure(figsize=(10, 8))
-importances.plot(kind='barh')
-plt.title('Feature Importance — Resilience Prediction')
+importances.head(20).plot(kind='barh')
+plt.title('Top 20 Feature Importances — Resilience Prediction')
 plt.xlabel('Importance Score')
 plt.tight_layout()
 plt.savefig('outputs/feature_importance.png')
@@ -785,7 +898,31 @@ cv_scores = cross_val_score(best_model, X_scaled, y, cv=5, scoring='roc_auc')
 print(f"5-Fold CV AUC: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
 ```
 
-### 7.6 Model Justification (for judges)
+#### Step 5: Save Artifacts
+
+```python
+import joblib
+import json
+
+joblib.dump({
+    'model': best_model,
+    'imputer': imputer,
+    'scaler': scaler,
+    'feature_cols': feature_cols
+}, 'artifacts/resilience_classifier.joblib')
+
+metrics = {
+    'best_model': 'XGBoost',
+    'auc_roc': float(results_df.loc['XGBoost', 'AUC-ROC']),
+    'cv_auc_mean': float(cv_scores.mean()),
+    'cv_auc_std': float(cv_scores.std()),
+    'feature_importances': importances.head(20).to_dict()
+}
+with open('artifacts/train_metrics.json', 'w') as f:
+    json.dump(metrics, f, indent=2)
+```
+
+### 7.7 Model Justification (for judges)
 
 Document why you chose the final model:
 
@@ -794,13 +931,12 @@ Document why you chose the final model:
 3. **Class weighting** was used because At Risk orgs are a minority class.
 4. **Feature importance** confirms financial intuition: reserves, surplus margin, and grant dependency are top predictors.
 
-### 7.7 Output
+### 7.8 Output
 
-- **Trained model** saved as a pickle file
-- **Resilience Score** (0–100) for every org in the dataset
-- **Risk Classification** (At Risk / Stable) with probability
-- **Feature importance ranking** with business interpretation
-- **Threshold analysis:** At what Resilience Score does the probability of being At Risk exceed 50%?
+- **Updated `data/master_990.csv`** with `ResilienceScore` (0–100) and `AtRisk` (0/1) for every org
+- **`artifacts/resilience_classifier.joblib`:** Fitted model pipeline (model + imputer + scaler + feature list)
+- **`artifacts/train_metrics.json`:** Performance metrics, feature importances, decision threshold
+- **`outputs/feature_importance.png`** and **`outputs/eda_*.png`:** Visualizations
 
 ---
 
@@ -810,7 +946,12 @@ Document why you chose the final model:
 
 Simulate "what if" funding shock scenarios to assess nonprofit vulnerability and model recovery pathways. This answers: *"What happens if government grants drop 30%?"*
 
-### 8.2 Revenue Stream Classification
+### 8.2 Inputs & Outputs
+
+- **Input:** `data/master_990.csv` (with ResilienceScore from Module 3)
+- **Output:** Simulation results table (`data/simulation_results.csv`); vulnerability matrices by scenario and peer group
+
+### 8.3 Revenue Stream Classification
 
 First, classify each org's revenue by type using the available columns:
 
@@ -828,7 +969,7 @@ df['Rev_Sum_Check'] = (
 )
 ```
 
-### 8.3 Shock Scenarios
+### 8.4 Shock Scenarios
 
 Define a set of realistic funding shock scenarios:
 
@@ -838,7 +979,7 @@ Define a set of realistic funding shock scenarios:
 | **Gov Grant Shock 50%** | 50% cut in government grants | Reduce GovernmentGrantsAmt by 50% |
 | **Program Revenue Shock 25%** | 25% drop in program service revenue (e.g., pandemic) | Reduce ProgramServiceRevCY by 25% |
 | **Investment Shock 40%** | 40% drop in investment income (market crash) | Reduce InvestmentIncomeCY by 40% |
-| **Combined Recession** | 20% drop in all revenue streams simultaneously | Reduce TotalRevenueCY by 20% |
+| **Combined Recession** | 20% drop in all revenue streams simultaneously | Reduce all revenue columns by 20% |
 
 #### Implementation:
 
@@ -857,7 +998,6 @@ def simulate_shock(df, scenario_name, adjustments):
     """
     sim = df.copy()
 
-    # Apply revenue adjustments
     total_loss = 0
     for col, multiplier in adjustments.items():
         original = sim[col].fillna(0)
@@ -866,28 +1006,22 @@ def simulate_shock(df, scenario_name, adjustments):
         total_loss += loss
         sim[f'PostShock_{col}'] = shocked
 
-    # Post-shock total revenue
     sim['PostShock_TotalRevenue'] = sim['TotalRevenueCY'] - total_loss
-
-    # Post-shock net revenue (revenue minus expenses, expenses unchanged)
     sim['PostShock_NetRevenue'] = sim['PostShock_TotalRevenue'] - sim['TotalExpensesCY']
 
-    # Post-shock surplus margin
     sim['PostShock_SurplusMargin'] = np.where(
         sim['PostShock_TotalRevenue'] > 0,
         sim['PostShock_NetRevenue'] / sim['PostShock_TotalRevenue'],
         np.nan
     )
 
-    # Months of reserves to cover the deficit
     sim['MonthsToInsolvency'] = np.where(
         sim['PostShock_NetRevenue'] < 0,
         sim['NetAssetsEOY'] / (sim['PostShock_NetRevenue'].abs() / 12),
-        np.inf  # not insolvent
+        np.inf
     )
     sim['MonthsToInsolvency'] = sim['MonthsToInsolvency'].clip(lower=0, upper=120)
 
-    # Classification
     sim['PostShock_Status'] = np.where(
         sim['PostShock_NetRevenue'] >= 0, 'Survives (Surplus)',
         np.where(
@@ -902,7 +1036,6 @@ def simulate_shock(df, scenario_name, adjustments):
     sim['Scenario'] = scenario_name
     return sim
 
-# Run all scenarios
 scenarios = {
     'Grant Shock (-30%)': {'ContributionsGrantsCY': 0.70},
     'Gov Grant Shock (-50%)': {'GovernmentGrantsAmt': 0.50},
@@ -924,19 +1057,14 @@ for name, adjustments in scenarios.items():
 sim_df = pd.concat(all_sims, ignore_index=True)
 ```
 
-### 8.4 Recovery Pathway Modeling
+### 8.5 Recovery Pathway Modeling
 
 For organizations that fall into deficit under a shock, estimate how long recovery takes:
 
 ```python
 def estimate_recovery(row, annual_recovery_rate=0.05):
-    """
-    Given a post-shock deficit, estimate years to recover assuming
-    the org can grow revenue by `annual_recovery_rate` per year
-    while holding expenses flat.
-    """
     if row['PostShock_NetRevenue'] >= 0:
-        return 0  # no recovery needed
+        return 0
 
     deficit = abs(row['PostShock_NetRevenue'])
     revenue = row['PostShock_TotalRevenue']
@@ -951,19 +1079,57 @@ def estimate_recovery(row, annual_recovery_rate=0.05):
         if annual_surplus > 0:
             cumulative_surplus += annual_surplus
 
-    return years if years < 20 else None  # None = may not recover
+    return years if years < 20 else None
 
 sim_df['RecoveryYears'] = sim_df.apply(estimate_recovery, axis=1)
 ```
 
-### 8.5 Output
+### 8.6 Threshold Discovery
 
+This is where non-obvious insights emerge — critical for the "Level of Insights" judging criterion:
+
+```python
+# For the Grant Shock scenario, find the grant dependency threshold
+# where the probability of going critical exceeds 50%
+grant_shock = sim_df[sim_df['Scenario'] == 'Grant Shock (-30%)'].copy()
+grant_shock['IsCritical'] = (grant_shock['PostShock_Status'] == 'Critical (<3mo reserves)').astype(int)
+
+# Bin by GrantDependencyPct and compute critical rate
+grant_shock['DepBucket'] = pd.cut(grant_shock['GrantDependencyPct'], bins=10)
+threshold_analysis = grant_shock.groupby('DepBucket')['IsCritical'].mean()
+print("Grant Dependency vs. Critical Rate:")
+print(threshold_analysis)
+
+# Cross-tabulate with OperatingReserveMonths for 2D threshold map
+grant_shock['ReserveBucket'] = pd.cut(
+    grant_shock['OperatingReserveMonths'],
+    bins=[0, 1, 3, 6, 12, 120],
+    labels=['<1mo', '1-3mo', '3-6mo', '6-12mo', '12mo+']
+)
+heatmap_data = grant_shock.pivot_table(
+    values='IsCritical', index='DepBucket', columns='ReserveBucket', aggfunc='mean'
+)
+```
+
+### 8.7 Save Simulation Results
+
+```python
+# Save a summary per scenario (not the full duplicated dataset)
+summary_cols = ['EIN', 'OrgName', 'Sector', 'State', 'SizeCategory',
+                'Scenario', 'PostShock_TotalRevenue', 'PostShock_NetRevenue',
+                'PostShock_SurplusMargin', 'MonthsToInsolvency',
+                'PostShock_Status', 'RecoveryYears']
+sim_df[summary_cols].to_csv('data/simulation_results.csv', index=False)
+```
+
+### 8.8 Output
+
+- **`data/simulation_results.csv`:** Post-shock financials for every org under each scenario.
 - **Vulnerability Matrix:** For each scenario × peer group, what % of orgs are Critical / At Risk / Stressed / Surviving.
-- **Individual Org Stress Test:** For any EIN, show post-shock financials under each scenario.
+- **Threshold Discovery Table:** Grant dependency and reserve combinations mapped to critical rates.
 - **Recovery Timeline:** Estimated years to recover for each org under each scenario.
-- **Threshold Discovery:** At what grant dependency level does a 30% grant shock become fatal? (e.g., "Orgs with >70% grant dependency and <3 months reserves have 80% chance of going critical under a 30% grant shock.")
 
-### 8.6 Visualization
+### 8.9 Visualization (build during Module 6, but design now)
 
 - **Waterfall chart:** Show revenue breakdown before/after shock for a selected org.
 - **Sankey diagram:** Flow of orgs from pre-shock status to post-shock status.
@@ -977,7 +1143,12 @@ sim_df['RecoveryYears'] = sim_df.apply(estimate_recovery, axis=1)
 
 Identify nonprofits that deliver **disproportionate community value relative to their budget** — organizations where a donation can create outsized impact.
 
-### 9.2 Defining "Impact Efficiency"
+### 9.2 Inputs & Outputs
+
+- **Input:** `data/master_990.csv` (with ResilienceScore from Module 3 and peer benchmarks from Module 2)
+- **Output:** Hidden gems list; Impact Efficiency Scores appended to master table
+
+### 9.3 Defining "Impact Efficiency"
 
 Since we don't have direct outcome data (lives saved, students graduated), we use financial proxies for impact:
 
@@ -992,9 +1163,6 @@ Since we don't have direct outcome data (lives saved, students graduated), we us
 | Financial Sustainability | 20% | ResilienceScore (from Module 3) | Sustainable orgs deliver long-term impact |
 
 ```python
-# Normalize each component to 0-1 scale using percentile rank
-from scipy.stats import percentileofscore
-
 def percentile_rank(series):
     return series.rank(pct=True)
 
@@ -1008,12 +1176,13 @@ df['ProgramLeverage'] = np.where(
 )
 df['Impact_Leverage'] = percentile_rank(df['ProgramLeverage'])
 
-df['CommunityReach'] = (df['Employees'].fillna(0) + df['Volunteers'].fillna(0)) / (df['TotalRevenueCY'] / 1_000_000)
+df['CommunityReach'] = (
+    df['Employees'].fillna(0) + df['Volunteers'].fillna(0)
+) / (df['TotalRevenueCY'] / 1_000_000)
 df['Impact_Reach'] = percentile_rank(df['CommunityReach'])
 
 df['Impact_Sustainability'] = percentile_rank(df['ResilienceScore'])
 
-# Weighted composite
 df['ImpactEfficiencyScore'] = (
     0.25 * df['Impact_ProgramEff'] +
     0.20 * df['Impact_Growth'] +
@@ -1023,37 +1192,32 @@ df['ImpactEfficiencyScore'] = (
 ) * 100
 ```
 
-### 9.3 Identifying "Hidden Gems"
+### 9.4 Identifying "Hidden Gems"
 
 A **Hidden Gem** is an org that scores high on Impact Efficiency but is **small or mid-sized** (not already well-known/well-funded):
 
 ```python
-# Hidden Gems: High impact efficiency + small/mid revenue + positive growth
 hidden_gems = df[
     (df['ImpactEfficiencyScore'] > df['ImpactEfficiencyScore'].quantile(0.80)) &
     (df['TotalRevenueCY'] < df['TotalRevenueCY'].quantile(0.50)) &
     (df['RevenueGrowthPct'] > 0) &
-    (df['ResilienceScore'] > 40)  # not at immediate risk
+    (df['ResilienceScore'] > 40)
 ].sort_values('ImpactEfficiencyScore', ascending=False)
 
 print(f"Hidden Gems identified: {len(hidden_gems)}")
 ```
 
-### 9.4 "Donation Tipping Point" Analysis
+### 9.5 "Donation Tipping Point" Analysis
 
 For each hidden gem, estimate the donation amount that would move them to the next resilience tier:
 
 ```python
 def donation_tipping_point(row):
-    """
-    Calculate how much additional funding would bring this org's
-    operating reserves from current level to 6 months.
-    """
     current_reserves_months = row['OperatingReserveMonths']
     monthly_expenses = row['TotalExpensesCY'] / 12
 
     if current_reserves_months >= 6:
-        return 0  # already healthy
+        return 0
 
     months_needed = 6 - max(current_reserves_months, 0)
     donation_needed = months_needed * monthly_expenses
@@ -1062,11 +1226,25 @@ def donation_tipping_point(row):
 hidden_gems['DonationToStabilize'] = hidden_gems.apply(donation_tipping_point, axis=1)
 ```
 
-### 9.5 Output
+### 9.6 Save Results
 
-- **Hidden Gems Leaderboard:** Top 50 orgs ranked by Impact Efficiency Score, with their sector, state, revenue, and donation tipping point.
-- **Impact vs. Budget Scatter:** All orgs plotted with budget (x) vs. impact score (y), hidden gems highlighted.
-- **Donation ROI Table:** For each hidden gem, show "a $X donation would bring reserves from Y months to 6 months."
+```python
+# Save hidden gems as a standalone leaderboard
+gem_cols = ['EIN', 'OrgName', 'State', 'City', 'Sector', 'SizeCategory',
+            'TotalRevenueCY', 'ImpactEfficiencyScore', 'ResilienceScore',
+            'ProgramExpenseRatio', 'RevenueGrowthPct', 'OperatingReserveMonths',
+            'DonationToStabilize', 'Mission']
+hidden_gems[gem_cols].to_csv('data/hidden_gems.csv', index=False)
+
+# Also save ImpactEfficiencyScore back to master table
+df.to_csv('data/master_990.csv', index=False)
+```
+
+### 9.7 Output
+
+- **`data/hidden_gems.csv`:** Top hidden gems ranked by Impact Efficiency Score, with sector, state, revenue, and donation tipping point.
+- **Updated `data/master_990.csv`:** ImpactEfficiencyScore appended for all orgs.
+- **Donation ROI Table:** For each hidden gem, "a $X donation would bring reserves from Y months to 6 months."
 
 ---
 
@@ -1076,7 +1254,15 @@ hidden_gems['DonationToStabilize'] = hidden_gems.apply(donation_tipping_point, a
 
 Present all insights through an interactive dashboard that a non-technical funder or nonprofit leader can use. This addresses the 20% Business Storytelling criterion.
 
-### 10.2 Dashboard Pages (Streamlit)
+### 10.2 Inputs
+
+- `data/master_990.csv` (final version with all scores)
+- `data/peer_group_stats.csv` (Module 2)
+- `data/simulation_results.csv` (Module 4)
+- `data/hidden_gems.csv` (Module 5)
+- `artifacts/train_metrics.json` (Module 3)
+
+### 10.3 Dashboard Pages (Streamlit)
 
 #### Page 1: Executive Overview
 - Total nonprofits analyzed, by state and NTEE sector
@@ -1105,23 +1291,22 @@ Present all insights through an interactive dashboard that a non-technical funde
 - **Output:** Ranked table of hidden gems with Impact Efficiency Score, donation tipping point
 - Scatter plot: budget vs. impact with highlighted gems
 
-### 10.3 Implementation Skeleton
+### 10.4 Implementation Skeleton
 
 ```python
 import streamlit as st
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="Nonprofit Resilience Analytics", layout="wide")
 
-# Load data
 @st.cache_data
 def load_data():
-    return pd.read_csv('data/master_990.csv')
+    return pd.read_csv('data/master_990.csv', low_memory=False)
 
 df = load_data()
 
-# Sidebar navigation
 page = st.sidebar.selectbox("Navigate", [
     "Executive Overview",
     "Peer Benchmarking",
@@ -1139,12 +1324,10 @@ if page == "Executive Overview":
     col3.metric("Avg Resilience Score", f"{df['ResilienceScore'].mean():.1f}")
     col4.metric("States Covered", df['State'].nunique())
 
-    # Resilience distribution
     fig = px.histogram(df, x='ResilienceScore', nbins=50,
                        title='Distribution of Resilience Scores')
     st.plotly_chart(fig, use_container_width=True)
 
-    # Map
     state_avg = df.groupby('State')['ResilienceScore'].mean().reset_index()
     fig_map = px.choropleth(
         state_avg, locations='State', locationmode='USA-states',
@@ -1156,14 +1339,14 @@ if page == "Executive Overview":
 # ... (similar implementation for other pages)
 ```
 
-### 10.4 Presentation Narrative Structure
+### 10.5 Presentation Narrative Structure
 
 For the final presentation (slides), follow this story arc:
 
 1. **The Problem** (1 slide): Nonprofits operate in the dark about their financial resilience.
-2. **Our Approach** (1 slide): Four-module analytics platform using **seven years** of IRS Form 990 data (**2019–2025**), enriched with NTEE sector classifications.
+2. **Our Approach** (1 slide): Four-module analytics platform using **seven years** of IRS Form 990 data (**2018–2024**), enriched with NTEE sector classifications.
 3. **Key Finding 1 — Peer Benchmarking** (2 slides): "We used NTEE codes to define X sector-based peer groups. Here's how sectors compare."
-4. **Key Finding 2 — Resilience Drivers** (2 slides): "The #1 predictor of resilience is operating reserves. Orgs with <3 months reserves are 4x more likely to be at risk."
+4. **Key Finding 2 — Resilience Drivers** (2 slides): "The #1 predictor of resilience is operating reserves. Orgs with <3 months reserves are Nx more likely to be at risk."
 5. **Key Finding 3 — Stress Test Results** (2 slides): "Under a 30% grant shock, X% of orgs become critical. Government-grant-dependent orgs are most vulnerable."
 6. **Key Finding 4 — Hidden Gems** (2 slides): "We found X hidden gems. A $Y average donation could stabilize Z organizations."
 7. **Recommendations for Fairlight Advisors** (1 slide): Actionable next steps.
@@ -1190,49 +1373,57 @@ For the final presentation (slides), follow this story arc:
 - **Stress test results are plausible** — orgs heavily dependent on grants should be most affected by grant shocks.
 - **Hidden gems are genuinely small, efficient, and growing** — not just data artifacts.
 
-### 11.3 Validation Approach
+### 11.3 Temporal Validation Approach
 
-Since we have multi-year data, use **temporal validation**:
-- Train the model on earlier years in the panel (e.g. **2019–2021**)
-- Predict outcomes on holdout years (e.g. **2022–2025**)
-- Check: did orgs flagged “At Risk” in the train era show deterioration in the holdout era?
+Since we have multi-year data (2018–2024), use **temporal validation** to test whether the model's predictions hold over time:
 
-Adjust the split if class balance or row counts require it; keep the rule “train on past, test on future” within **2019–2025**.
+- **Train** on earlier years in the panel (e.g., **2018–2021**)
+- **Test/predict** on later years (e.g., **2022–2024**)
+- **Check:** Did orgs flagged "At Risk" in the train era show deterioration in the test era?
+
+This is the most honest evaluation for time-series financial data and directly demonstrates to judges that the model generalizes.
 
 ```python
-# Temporal validation (illustrative split for a 2019–2025 panel)
 train_df = df[df['TaxYear'] <= 2021]
 test_df = df[df['TaxYear'] >= 2022]
-
-# Train on earlier years, predict on later years
-# This is the most honest evaluation for time-series financial data
+print(f"Temporal split — Train: {len(train_df)} rows (2018–2021), Test: {len(test_df)} rows (2022–2024)")
 ```
+
+**Fallback:** If class balance is poor in either split, adjust the boundary (e.g., train on 2018–2022, test on 2023–2024). Keep the principle: "train on past, test on future."
 
 ---
 
 ## 12. Implementation Roadmap
 
-### Phase 1: Data Pipeline (Estimated: 3–4 hours)
+### Phase 1: Data Pipeline — Module 1 (Estimated: 2–3 hours)
 
 | Step | Task | Output |
 |------|------|--------|
-| 1.1 | Load and concatenate all `*_990.csv` annual extracts | Combined DataFrame |
-| 1.2 | Deduplicate EIN+TaxYear combinations | Clean DataFrame |
-| 1.3 | Handle missing values and data types | Cleaned DataFrame |
-| 1.4 | Compute all derived features (Section 5.4) | `master_990.csv` |
-| 1.5 | Initial EDA: distributions, correlations, missing values | EDA notebook/plots |
+| 1.1 | Load and concatenate all `*990*.csv` files | Combined DataFrame (~362K rows) |
+| 1.2 | Deduplicate EIN+TaxYear combinations | Deduplicated DataFrame (~344K rows) |
+| 1.3 | Filter to TaxYear 2018–2024 panel | Analysis DataFrame (~341K rows) |
+| 1.4 | Handle missing values, data types, sentinels | Cleaned DataFrame |
+| 1.5 | Compute all derived features (Section 5.3, Steps 5a–5g) | Feature-enriched DataFrame |
+| 1.6 | Run validation checklist (Section 5.4) | All checks pass |
+| 1.7 | Save `data/master_990.csv` | Master table on disk |
+| 1.8 | Initial EDA: distributions, correlations, missing values | EDA notebook/plots |
 
-### Phase 2: Peer Benchmarking (Estimated: 2–3 hours)
+**Prerequisite:** None — this is the starting module.
+
+### Phase 2: Peer Benchmarking — Module 2 (Estimated: 2–3 hours)
 
 | Step | Task | Output |
 |------|------|--------|
-| 2.1 | Map NTEE major groups to sector labels; apply Mission-text fallback for missing NTEE | Sector column |
-| 2.2 | Define peer groups (Sector × Size × State) | PeerGroupID column |
-| 2.3 | Compute peer group statistics (median, IQR) | Peer stats table |
-| 2.4 | Compute Z-scores and deviation flags | Benchmark columns |
-| 2.5 | Build radar chart and box plot visualizations | Benchmark visuals |
+| 2.1 | Load master table; assign PeerGroupID (Sector × Size × State) | PeerGroupID column |
+| 2.2 | Handle small peer groups (<5 members) with fallback | Cleaned peer groups |
+| 2.3 | Compute peer group statistics (median, IQR) | `data/peer_group_stats.csv` |
+| 2.4 | Compute Z-scores, deviation flags, and percentile ranks | Benchmark columns |
+| 2.5 | Save updated master table | Updated `data/master_990.csv` |
+| 2.6 | Build radar chart and box plot visualizations | Benchmark visuals |
 
-### Phase 3: Resilience Model (Estimated: 3–4 hours)
+**Prerequisite:** Module 1 complete.
+
+### Phase 3: Resilience Model — Module 3 (Estimated: 3–4 hours)
 
 | Step | Task | Output |
 |------|------|--------|
@@ -1242,26 +1433,35 @@ test_df = df[df['TaxYear'] >= 2022]
 | 3.4 | Select best model, analyze feature importance | Final model + importance plot |
 | 3.5 | Cross-validation and temporal validation | Validation metrics |
 | 3.6 | Threshold analysis | Threshold table |
+| 3.7 | Save model artifacts | `artifacts/` directory |
 
-### Phase 4: Risk Simulation (Estimated: 2–3 hours)
+**Prerequisite:** Module 2 complete (peer Z-scores may be used as features).
+
+### Phase 4: Risk Simulation — Module 4 (Estimated: 2–3 hours)
 
 | Step | Task | Output |
 |------|------|--------|
 | 4.1 | Classify revenue streams | Revenue breakdown columns |
 | 4.2 | Implement shock simulation function | `simulate_shock()` |
-| 4.3 | Run all 5 scenarios | Simulation results table |
+| 4.3 | Run all 5 scenarios | Simulation results |
 | 4.4 | Recovery pathway estimation | Recovery years column |
 | 4.5 | Vulnerability threshold analysis | Threshold findings |
+| 4.6 | Save `data/simulation_results.csv` | Simulation data on disk |
 
-### Phase 5: Hidden Gems (Estimated: 2 hours)
+**Prerequisite:** Module 3 complete (uses ResilienceScore for context).
+
+### Phase 5: Hidden Gems — Module 5 (Estimated: 2 hours)
 
 | Step | Task | Output |
 |------|------|--------|
 | 5.1 | Compute Impact Efficiency Score components | Score columns |
 | 5.2 | Identify hidden gems (high impact + small budget) | Hidden gems list |
 | 5.3 | Donation tipping point analysis | Tipping point table |
+| 5.4 | Save `data/hidden_gems.csv` and update master table | Data on disk |
 
-### Phase 6: Dashboard & Presentation (Estimated: 3–4 hours)
+**Prerequisite:** Module 3 complete (uses ResilienceScore as a component).
+
+### Phase 6: Dashboard & Presentation — Module 6 (Estimated: 3–4 hours)
 
 | Step | Task | Output |
 |------|------|--------|
@@ -1270,13 +1470,15 @@ test_df = df[df['TaxYear'] >= 2022]
 | 6.3 | Prepare presentation slides | Slide deck |
 | 6.4 | Practice narrative and demo | Presentation ready |
 
-**Total Estimated Time: 15–20 hours**
+**Prerequisite:** Modules 2–5 complete.
+
+**Total Estimated Time: 14–19 hours**
 
 ---
 
 ## 13. Appendix: Column Data Dictionary
 
-### Original Columns (from CSV)
+### Original Columns (37 columns in each CSV)
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -1285,12 +1487,12 @@ test_df = df[df['TaxYear'] >= 2022]
 | `State` | string | 2-letter state abbreviation |
 | `City` | string | City name |
 | `ZIP` | string | ZIP code |
-| `TaxYear` | int | The tax year this filing covers (panel target: 2019–2025) |
+| `TaxYear` | int | The tax year this filing covers (analysis panel: 2018–2024) |
 | `TaxPeriodEnd` | date | End date of the tax period (e.g., 2024-06-30) |
 | `FormType` | string | Always "990" in this dataset |
 | `FormationYr` | int | Year the organization was formed/incorporated |
 | `Mission` | string | Free-text description of the organization's mission |
-| `NTEE_CD` | string | National Taxonomy of Exempt Entities code (e.g., `B42`, `E62`). Joined from IRS TEOS bulk data. NULL for ~25% of records — use Mission-text fallback for sector classification. The first character is the major-group letter (A–Z). |
+| `NTEE_CD` | string | National Taxonomy of Exempt Entities code (e.g., `B42`, `E62`). Pre-joined from IRS TEOS bulk data. NULL for ~30% of records — use Mission-text fallback for sector classification. The first character is the major-group letter (A–Z). |
 | `Employees` | float | Total number of employees |
 | `Volunteers` | float | Total number of volunteers |
 | `GrossReceipts` | float | Total gross receipts (all money received) |
@@ -1333,19 +1535,20 @@ test_df = df[df['TaxYear'] >= 2022]
 | `OperatingReserveMonths` | NetAssetsEOY / (TotalExpensesCY / 12) | Months the org could survive with no revenue |
 | `DebtRatio` | TotalLiabilitiesEOY / TotalAssetsEOY | Fraction of assets financed by debt |
 | `AssetLiabilityRatio` | TotalAssetsEOY / TotalLiabilitiesEOY | Assets per dollar of liabilities |
-| `RevenueGrowthPct` | (CY − PY) / |PY| | Year-over-year revenue change |
-| `ExpenseGrowthPct` | (CY − PY) / |PY| | Year-over-year expense change |
-| `ContributionGrowthPct` | (CY − PY) / |PY| | Year-over-year contribution change |
-| `NetAssetGrowthPct` | (EOY − BOY) / |BOY| | Balance sheet health trend |
+| `RevenueGrowthPct` | (CY − PY) / \|PY\| | Year-over-year revenue change |
+| `ExpenseGrowthPct` | (CY − PY) / \|PY\| | Year-over-year expense change |
+| `ContributionGrowthPct` | (CY − PY) / \|PY\| | Year-over-year contribution change |
+| `NetAssetGrowthPct` | (EOY − BOY) / \|BOY\| | Balance sheet health trend |
 | `OrgAge` | TaxYear − FormationYr | Years since formation |
 | `SizeCategory` | Revenue-based bins | <500K, 500K-1M, 1M-5M, 5M-10M, 10M-50M, 50M+ |
 | `RevenuePerEmployee` | TotalRevenueCY / Employees | Productivity proxy |
-| `Sector` | NTEE major-group label; Mission-text fallback | Readable sector name for peer grouping and display |
-| `NTEEMajorGroup` | First character of NTEE_CD (A–Z) | Categorical feature for ML models (one-hot encoded) |
 | `LogRevenue` | log(1 + TotalRevenueCY) | Log-transformed revenue for modeling |
 | `LogAssets` | log(1 + TotalAssetsEOY) | Log-transformed assets for modeling |
-| `ResilienceScore` | Weighted composite (0–100) | Overall financial resilience rating |
-| `AtRisk` | Binary (0/1) | Classification target for ML model |
+| `Sector` | NTEE major-group label; Mission-text fallback | Readable sector name for peer grouping and display |
+| `NTEEMajorGroup` | First character of NTEE_CD (A–Z) | Categorical feature for ML models (one-hot encoded) |
+| `ResilienceScore` | Weighted composite (0–100) | Overall financial resilience rating (Module 3) |
+| `AtRisk` | Binary (0/1) | Classification target for ML model (Module 3) |
+| `ImpactEfficiencyScore` | Weighted composite (0–100) | Impact-per-dollar rating (Module 5) |
 
 ---
 
@@ -1356,11 +1559,19 @@ aggie_hacks_2026/
 ├── PRD.md                          # This document
 ├── data/
 │   ├── data_csv/
-│   │   ├── 2019_990.csv …          # Annual extracts; panel TaxYear 2019–2025
-│   │   └── 2025_990.csv            # (add each year); all include NTEE_CD after ntee_col_addon.py
-│   ├── TEOS IRS Data/              # IRS TEOS bulk files (source for NTEE lookup)
-│   │   ├── eo1.csv ... eo4.csv     # Split/chunked TEOS extracts
-│   └── master_990.csv              # Output of Module 1
+│   │   ├── 2019_990.csv            # IRS release batch (TaxYears 2016–2018)
+│   │   ├── 2020_990.csv            # (TaxYears 2017–2019)
+│   │   ├── 2021_990.csv            # (TaxYears 2018–2020)
+│   │   ├── 2022_1_990.csv          # (TaxYears 2018–2021)
+│   │   ├── 2022_2_990.csv          # (TaxYears 2019–2021)
+│   │   ├── 2023_1_990.csv          # (TaxYears 2020–2022)
+│   │   ├── 2023_2_990.csv          # (TaxYears 2020–2022)
+│   │   ├── 2025_990.csv            # (TaxYears 2021–2024)
+│   │   └── <future 2024 batches>   # Drop here; pipeline auto-detects
+│   ├── master_990.csv              # Output of Module 1
+│   ├── peer_group_stats.csv        # Output of Module 2
+│   ├── simulation_results.csv      # Output of Module 4
+│   └── hidden_gems.csv             # Output of Module 5
 ├── notebooks/
 │   ├── 01_data_pipeline.ipynb      # Module 1: Load, clean, feature engineering
 │   ├── 02_eda.ipynb                # Exploratory Data Analysis
@@ -1373,24 +1584,17 @@ aggie_hacks_2026/
 │   ├── peers.py                    # Module 2: Peer Z-scores and benchmarks
 │   ├── resilience_model.py         # Module 3 functions
 │   ├── risk_simulation.py          # Module 4 functions
-│   └── hidden_gems.py              # Module 5 functions
-├── scripts/
-│   └── build_artifacts.py          # One-command: master CSV + train model + artifacts
+│   └── hidden_gems.py             # Module 5 functions
 ├── artifacts/
-│   ├── resilience_classifier.joblib  # Fitted sklearn Pipeline
+│   ├── resilience_classifier.joblib  # Fitted sklearn Pipeline (Module 3)
 │   └── train_metrics.json          # Metrics, importances, decision threshold
 ├── app.py                          # Module 6: Streamlit dashboard
 ├── outputs/
 │   ├── eda_correlation_heatmap.png
 │   ├── feature_importance.png
 │   └── ...                         # All generated plots
-├── tests/
-│   ├── test_pipeline.py            # Pipeline unit tests
-│   └── test_resilience_model.py    # Model training smoke tests
-├── parse_990.py                    # XML parser for raw IRS filings
-├── ntee_col_addon.py               # Joins NTEE_CD from TEOS data onto CSVs
-├── split_csvs.py                   # Splits large TEOS CSVs for Git (<50 MB)
-└── requirements.txt                # Python dependencies
+├── requirements.txt                # Python dependencies
+└── README.md                       # (optional) Quick-start guide
 ```
 
 ### requirements.txt
@@ -1405,4 +1609,5 @@ seaborn>=0.12
 plotly>=5.15
 streamlit>=1.28
 scipy>=1.11
+joblib>=1.3
 ```
