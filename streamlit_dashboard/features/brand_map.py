@@ -22,18 +22,27 @@ def build_brand_map(df: pd.DataFrame) -> go.Figure:
     """
     plot_df = df[~df["_exclude_brand_map"]].copy().reset_index(drop=True)
 
-    plot_df["_TotalRevenueFmt"] = (
-        plot_df["TotalRevenueCY"]
-        .apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
-    )
-    plot_df["_SurplusMarginFmt"] = (
-        plot_df["SurplusMargin"]
-        .apply(lambda x: f"{x * 100:.1f}%" if pd.notna(x) else "N/A")
-    )
-    plot_df["_GrantDependencyFmt"] = (
-        plot_df["GrantDependency"]
-        .apply(lambda x: f"{x * 100:.1f}%" if pd.notna(x) else "N/A")
-    )
+    # Use pre-formatted columns if available (added by feature_engineering.engineer_features)
+    if "_TotalRevenueFmt" not in plot_df.columns:
+        plot_df["_TotalRevenueFmt"] = (
+            pd.to_numeric(plot_df["TotalRevenueCY"], errors="coerce")
+            .apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+        )
+    if "_SurplusMarginFmt" not in plot_df.columns:
+        plot_df["_SurplusMarginFmt"] = (
+            pd.to_numeric(plot_df["SurplusMargin"], errors="coerce")
+            .apply(lambda x: f"{x * 100:.1f}%" if pd.notna(x) else "N/A")
+        )
+    # GrantDependencyPct is the column name in master_990.csv
+    grant_col = "GrantDependencyPct" if "GrantDependencyPct" in plot_df.columns else "GrantDependency"
+    if "_GrantDependencyFmt" not in plot_df.columns:
+        plot_df["_GrantDependencyFmt"] = (
+            pd.to_numeric(plot_df.get(grant_col, pd.Series(dtype=float)), errors="coerce")
+            .apply(lambda x: f"{x * 100:.1f}%" if pd.notna(x) else "N/A")
+        )
+    # Sector: use mission-based Sector (master_990) or NTEEMajorSector fallback
+    sector_col = "Sector" if "Sector" in plot_df.columns else "NTEEMajorSector"
+    plot_df["_SectorDisplay"] = plot_df.get(sector_col, "N/A").fillna("N/A")
 
     fig = go.Figure()
 
@@ -58,7 +67,7 @@ def build_brand_map(df: pd.DataFrame) -> go.Figure:
                     "OrgName",
                     "State",
                     "_TotalRevenueFmt",
-                    "NTEEMajorSector",
+                    "_SectorDisplay",
                     "_SurplusMarginFmt",
                     "_GrantDependencyFmt",
                     "ResilienceTier",
@@ -67,7 +76,7 @@ def build_brand_map(df: pd.DataFrame) -> go.Figure:
                     "<b>%{customdata[0]}</b><br>"
                     "State: %{customdata[1]}<br>"
                     "Total Revenue: %{customdata[2]}<br>"
-                    "NTEE Sector: %{customdata[3]}<br>"
+                    "Sector: %{customdata[3]}<br>"
                     "Surplus Margin: %{customdata[4]}<br>"
                     "Grant Dependency: %{customdata[5]}<br>"
                     "Resilience Tier: %{customdata[6]}"

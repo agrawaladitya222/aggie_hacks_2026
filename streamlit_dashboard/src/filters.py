@@ -33,27 +33,46 @@ NTEE_SECTOR_LABELS: dict[str, str] = {
     "Z": "Unknown",
 }
 
+# Mission-based sector labels (from data_pipeline.classify_sector)
+MISSION_SECTOR_ORDER = [
+    "Education",
+    "Healthcare",
+    "Housing & Shelter",
+    "Food & Nutrition",
+    "Arts & Culture",
+    "Environment",
+    "Youth Services",
+    "Religious",
+    "Community Development",
+    "Research & Science",
+    "Other/General",
+]
+
+SIZE_CATEGORY_ORDER = ["<500K", "500K-1M", "1M-5M", "5M-10M", "10M-50M", "50M+"]
+
 
 def apply_filters(
     df: pd.DataFrame,
     *,
     year: int | None = None,
     state: str | None = None,
-    ntee_sector: str | None = None,
-    size_bucket: str | None = None,
+    sector: str | None = None,
+    size_category: str | None = None,
     resilience_tier: str | None = None,
+    at_risk_predicted: int | None = None,
 ) -> pd.DataFrame:
     """
     Return a filtered subset of the enriched DataFrame.
 
     Parameters
     ----------
-    df              : Output of feature_engineering.engineer_features()
-    year            : TaxYear to keep (None = all years)
-    state           : 2-letter state code (None = all states)
-    ntee_sector     : Single NTEE major-sector letter (None = all sectors)
-    size_bucket     : "Small" | "Mid" | "Large" (None = all sizes)
-    resilience_tier : "Stable" | "Watch" | "At Risk" (None = all tiers)
+    df                : Output of feature_engineering.engineer_features()
+    year              : TaxYear to keep (None = all years)
+    state             : 2-letter state code (None = all states)
+    sector            : Mission-based sector string (None = all sectors)
+    size_category     : One of SIZE_CATEGORY_ORDER values (None = all sizes)
+    resilience_tier   : "Stable" | "Watch" | "At Risk" (None = all tiers)
+    at_risk_predicted : 1 or 0 to filter by model prediction (None = all)
     """
     mask = pd.Series(True, index=df.index)
 
@@ -63,14 +82,17 @@ def apply_filters(
     if state is not None:
         mask &= df["State"].astype(str).str.upper() == state.upper()
 
-    if ntee_sector is not None:
-        mask &= df["NTEEMajorSector"].astype(str).str.upper() == ntee_sector.upper()
+    if sector is not None:
+        mask &= df["Sector"].astype(str) == sector
 
-    if size_bucket is not None:
-        mask &= df["SizeBucket"].astype(str) == size_bucket
+    if size_category is not None:
+        mask &= df["SizeCategory"].astype(str) == size_category
 
     if resilience_tier is not None:
         mask &= df["ResilienceTier"] == resilience_tier
+
+    if at_risk_predicted is not None:
+        mask &= pd.to_numeric(df["AtRiskPredicted"], errors="coerce") == at_risk_predicted
 
     return df[mask].reset_index(drop=True)
 
@@ -83,27 +105,35 @@ def available_states(df: pd.DataFrame) -> list[str]:
     return sorted(df["State"].dropna().astype(str).str.upper().unique().tolist())
 
 
-def available_ntee_sectors(df: pd.DataFrame) -> list[str]:
-    """Returns sorted list of NTEE letters present in the data."""
-    return sorted(df["NTEEMajorSector"].dropna().astype(str).unique().tolist())
+def available_sectors(df: pd.DataFrame) -> list[str]:
+    present = set(df["Sector"].dropna().astype(str).unique())
+    ordered = [s for s in MISSION_SECTOR_ORDER if s in present]
+    extra = sorted(present - set(MISSION_SECTOR_ORDER))
+    return ordered + extra
 
 
-def ntee_sector_display_options(df: pd.DataFrame) -> dict[str, str]:
-    """Returns {display label: letter} for all NTEE sectors present in the data."""
-    letters = available_ntee_sectors(df)
-    return {
-        f"{letter} — {NTEE_SECTOR_LABELS.get(letter, 'Unknown')}": letter
-        for letter in letters
-    }
-
-
-def available_size_buckets(df: pd.DataFrame) -> list[str]:
-    order = ["Small", "Mid", "Large"]
-    present = set(df["SizeBucket"].dropna().astype(str).unique())
-    return [b for b in order if b in present]
+def available_size_categories(df: pd.DataFrame) -> list[str]:
+    present = set(df["SizeCategory"].dropna().astype(str).unique())
+    return [s for s in SIZE_CATEGORY_ORDER if s in present]
 
 
 def available_resilience_tiers(df: pd.DataFrame) -> list[str]:
     order = ["Stable", "Watch", "At Risk"]
     present = set(df["ResilienceTier"].dropna().astype(str).unique())
     return [t for t in order if t in present]
+
+
+# Legacy helpers kept for brand_map compatibility
+def available_size_buckets(df: pd.DataFrame) -> list[str]:
+    return available_size_categories(df)
+
+
+def ntee_sector_display_options(df: pd.DataFrame) -> dict[str, str]:
+    """Returns {display label: letter} for NTEE sectors — kept for compatibility."""
+    if "NTEEMajorSector" not in df.columns:
+        return {}
+    letters = sorted(df["NTEEMajorSector"].dropna().astype(str).unique().tolist())
+    return {
+        f"{letter} — {NTEE_SECTOR_LABELS.get(letter, 'Unknown')}": letter
+        for letter in letters
+    }

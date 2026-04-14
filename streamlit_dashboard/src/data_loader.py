@@ -1,32 +1,37 @@
-"""Load and deduplicate all *_990.csv files from data/data_csv/."""
+"""Load master_990.csv and train_metrics.json for the dashboard."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
 
-# Repo root is two levels above this file: streamlit_dashboard/src/data_loader.py
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_CSV_DIR = _REPO_ROOT / "data" / "data_csv"
+MASTER_CSV = _REPO_ROOT / "data" / "master_990.csv"
+TRAIN_METRICS_JSON = _REPO_ROOT / "artifacts" / "train_metrics.json"
 
 
-def load_data(data_csv_dir: Path = DATA_CSV_DIR) -> pd.DataFrame:
-    """
-    Glob all *_990.csv files, concatenate, and deduplicate.
-    Returns one row per (EIN, TaxYear), keeping the most recent TaxPeriodEnd.
-    """
-    paths = sorted(data_csv_dir.glob("*_990.csv"))
-    if not paths:
-        raise FileNotFoundError(f"No *_990.csv files found in {data_csv_dir}")
-
-    df = pd.concat([pd.read_csv(p, dtype={"EIN": str, "NTEE_CD": str}) for p in paths], ignore_index=True)
-
-    df["TaxPeriodEnd"] = pd.to_datetime(df["TaxPeriodEnd"], errors="coerce")
-    df = (
-        df.sort_values("TaxPeriodEnd", ascending=False, na_position="last")
-        .drop_duplicates(subset=["EIN", "TaxYear"], keep="first")
-        .reset_index(drop=True)
+def load_data(master_csv: Path = MASTER_CSV) -> pd.DataFrame:
+    """Load the pre-built master_990.csv with all features, peer scores, and model predictions."""
+    if not master_csv.exists():
+        raise FileNotFoundError(
+            f"master_990.csv not found at {master_csv}. "
+            "Run `python3 scripts/build_artifacts.py` to generate it."
+        )
+    df = pd.read_csv(
+        master_csv,
+        dtype={"EIN": str, "NTEE_CD": str},
+        low_memory=False,
     )
-
+    df["TaxYear"] = pd.to_numeric(df["TaxYear"], errors="coerce")
+    df["TaxPeriodEnd"] = pd.to_datetime(df["TaxPeriodEnd"], errors="coerce")
     return df
+
+
+def load_train_metrics(metrics_json: Path = TRAIN_METRICS_JSON) -> dict:
+    """Load model evaluation metrics from artifacts/train_metrics.json."""
+    if not metrics_json.exists():
+        return {}
+    with open(metrics_json, "r", encoding="utf-8") as f:
+        return json.load(f)
