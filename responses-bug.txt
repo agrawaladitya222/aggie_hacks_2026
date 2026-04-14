@@ -1,0 +1,100 @@
+Bug Report Responses
+====================
+
+1. Navigation text hard to read (grey text on dark blue background)
+--------------------------------------------------------------------
+STATUS: FIXED
+
+The existing CSS already set sidebar labels to #cdd5df (light grey), but Streamlit's
+radio button components render their option text inside nested elements (p, span, div
+with role="radiogroup") that the original selector didn't reach. Added targeted CSS
+rules for those elements:
+
+    section[data-testid="stSidebar"] [data-testid="stRadio"] label p
+    section[data-testid="stSidebar"] [data-testid="stRadio"] label span
+    section[data-testid="stSidebar"] [data-baseweb="radio"] label
+    section[data-testid="stSidebar"] div[role="radiogroup"] label
+    section[data-testid="stSidebar"] div[role="radiogroup"] p
+
+All navigation option text is now set to #ffffff (white) so it is clearly readable
+against the dark blue sidebar background.
+
+
+2. Search functionality only shows organizations up to letter A
+---------------------------------------------------------------
+STATUS: FIXED
+
+The root cause was a hard limit of 5000 on the organization list:
+
+    org_names = sorted(df["OrgName"].dropna().unique())[:5000]
+
+After sorting alphabetically, the slice [:5000] cut off the list partway through the
+letter A (or shortly after), so organizations starting with B–Z never appeared in the
+dropdown. Removed the slice:
+
+    org_names = sorted(df["OrgName"].dropna().unique().tolist())
+
+All organizations are now available in the search dropdown.
+
+
+3. Orange impact banner missing for "Investment Shock (~40%)" scenario
+----------------------------------------------------------------------
+STATUS: FIXED
+
+The impact banner was wrapped in a conditional:
+
+    if combined_danger > 0.1:
+
+The Investment Shock scenario results in a lower combined percentage of
+critical/at-risk organizations (below 10%), so the condition evaluated to False and
+the banner was suppressed. This threshold was arbitrary — the information is always
+useful to display regardless of the percentage. Removed the condition so the banner
+now appears for every scenario including Investment Shock.
+
+
+4. Score shows as "nan/100" for some organizations (e.g., 1 Archangel Services Inc)
+------------------------------------------------------------------------------------
+STATUS: FIXED (display) + EXPLANATION
+
+This is expected behavior, not a code bug, but the display was poor. Here is why it
+happens:
+
+The ResilienceScore is a composite of five metrics (operating reserves, revenue
+diversification, program spending, surplus margin, and debt ratio). If an organization
+has missing (NaN) values for one or more of these underlying metrics in the 990 filing
+data — because the field was left blank, the organization did not file certain
+schedules, or the data was unavailable for that year — the composite score cannot be
+calculated and remains NaN.
+
+For example, very small nonprofits sometimes do not report all financial detail, and
+organizations in their first or last filing year may have incomplete data.
+
+The display bug (showing "nan/100" literally) has been fixed: the score area now
+shows "N/A" when the ResilienceScore is NaN, giving a cleaner presentation.
+
+
+5. Spider chart axes counterintuitive for Debt-to-Asset Ratio and Fundraising Cost %
+-------------------------------------------------------------------------------------
+STATUS: FIXED
+
+You are correct — this was a real bug. The previous normalization divided all metric
+values by the peer median:
+
+    normed = v / ref
+
+This means a larger spoke always meant a higher raw value. For metrics where higher
+is better (Program Spending %, Surplus Margin, etc.) this is intuitive. But for
+"lower is better" metrics (Fundraising Cost %, Debt-to-Asset Ratio), a larger spoke
+incorrectly implied the organization was outperforming peers when it was actually doing
+worse.
+
+Fix: For FundraisingRatio and DebtRatio, the normalization is now inverted using:
+
+    normed = max(0.0, 2.0 - v / ref)
+
+This formula keeps the median at 1.0 (same as all other axes) but flips the direction:
+  - org value BELOW median (better) → spoke extends BEYOND 1.0 (visually larger = better)
+  - org value ABOVE median (worse)  → spoke SHRINKS below 1.0 (visually smaller = worse)
+
+The spider chart now consistently reads: a larger blue spoke on any axis means the
+organization is doing BETTER than its peers on that dimension.
