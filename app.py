@@ -3,124 +3,920 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+# ---------------------------------------------------------------------------
+# Page config & global styling
+# ---------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Nonprofit Financial Resilience",
+    page_icon="🏛️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-st.set_page_config(page_title="Nonprofit Resilience Analytics", layout="wide")
+CUSTOM_CSS = """
+<style>
+/* ---- Top-level metrics ---- */
+[data-testid="stMetric"] {
+    background: linear-gradient(135deg, #f8f9fc 0%, #eef1f8 100%);
+    border: 1px solid #dde2ec;
+    border-radius: 12px;
+    padding: 16px 20px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.85rem !important;
+    color: #5a6577 !important;
+    font-weight: 500 !important;
+}
+[data-testid="stMetricValue"] {
+    font-size: 1.8rem !important;
+    font-weight: 700 !important;
+    color: #1a2332 !important;
+}
+
+/* ---- Sidebar ---- */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1a2332 0%, #243447 100%);
+}
+section[data-testid="stSidebar"] .stMarkdown p,
+section[data-testid="stSidebar"] .stMarkdown li,
+section[data-testid="stSidebar"] label {
+    color: #cdd5df !important;
+}
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+    color: #ffffff !important;
+}
+
+/* ---- Insight callout boxes ---- */
+.insight-box {
+    background: #f0f7ff;
+    border-left: 4px solid #3b82f6;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0 20px 0;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+.insight-box-warn {
+    background: #fff8f0;
+    border-left: 4px solid #f59e0b;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0 20px 0;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+.insight-box-good {
+    background: #f0fdf4;
+    border-left: 4px solid #22c55e;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0 20px 0;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+/* ---- Section headers ---- */
+.section-header {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #374151;
+    border-bottom: 2px solid #e5e7eb;
+    padding-bottom: 6px;
+    margin: 28px 0 14px 0;
+}
+
+/* ---- Health badge ---- */
+.health-badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+.health-good { background: #dcfce7; color: #166534; }
+.health-ok   { background: #fef9c3; color: #854d0e; }
+.health-bad  { background: #fee2e2; color: #991b1b; }
+</style>
+"""
+
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+FRIENDLY_METRIC_NAMES = {
+    "ProgramExpenseRatio": "Program Spending %",
+    "FundraisingRatio": "Fundraising Cost %",
+    "SurplusMargin": "Surplus / Deficit Margin",
+    "OperatingReserveMonths": "Months of Reserves",
+    "DebtRatio": "Debt-to-Asset Ratio",
+    "GrantDependencyPct": "Grant Dependency %",
+    "ProgramRevenuePct": "Earned Revenue %",
+    "RevenueGrowthPct": "Revenue Growth %",
+    "RevenuePerEmployee": "Revenue per Employee",
+}
+
+METRIC_EXPLANATIONS = {
+    "Program Spending %": "What share of every dollar goes directly to programs and services (higher is better; 75%+ is the industry standard).",
+    "Fundraising Cost %": "What share of spending goes to fundraising (lower is better; above 25% is a red flag).",
+    "Surplus / Deficit Margin": "Whether the organization is bringing in more than it spends. Positive = surplus, negative = deficit.",
+    "Months of Reserves": "How many months the organization could operate with zero new revenue (3-6 months is healthy).",
+    "Debt-to-Asset Ratio": "What fraction of assets are financed by debt (lower is better; above 0.5 means more debt than equity).",
+    "Grant Dependency %": "How much revenue comes from grants and donations (above 80% = heavy dependency on donors).",
+    "Earned Revenue %": "How much revenue is earned through programs and services (higher = more self-sustaining).",
+    "Revenue Growth %": "Year-over-year revenue change (positive = growing).",
+    "Revenue per Employee": "How much revenue each employee generates (a rough productivity measure).",
+}
+
+STATUS_COLORS = {
+    "Survives (Surplus)": "#22c55e",
+    "Stressed (>12mo reserves)": "#eab308",
+    "At Risk (3-12mo reserves)": "#f97316",
+    "Critical (<3mo reserves)": "#ef4444",
+}
 
 
+def _fmt_dollars(val: float) -> str:
+    if abs(val) >= 1_000_000:
+        return f"${val / 1_000_000:,.1f}M"
+    if abs(val) >= 1_000:
+        return f"${val / 1_000:,.0f}K"
+    return f"${val:,.0f}"
+
+
+def _resilience_label(score: float) -> tuple[str, str]:
+    if score >= 70:
+        return "Strong", "health-good"
+    if score >= 40:
+        return "Moderate", "health-ok"
+    return "At Risk", "health-bad"
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
 @st.cache_data
 def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     master = pd.read_csv("data/master_990.csv", low_memory=False)
     peers = pd.read_csv("data/peer_group_stats.csv", low_memory=False)
     sims = pd.read_csv("data/simulation_results.csv", low_memory=False)
     metrics_path = Path("artifacts/train_metrics.json")
-    metrics = {}
+    metrics: dict = {}
     if metrics_path.exists():
         metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     return master, peers, sims, metrics
 
 
+# ---------------------------------------------------------------------------
+# PAGE 1 — Executive Overview
+# ---------------------------------------------------------------------------
 def executive_page(df: pd.DataFrame) -> None:
     st.title("Nonprofit Financial Resilience Dashboard")
+    st.markdown(
+        "A data-driven look at the financial health of **{:,}** U.S. nonprofits "
+        "across **{:,}** states and territories, using IRS Form 990 filings "
+        "from **2018 – 2024**.".format(len(df), int(df["State"].nunique()))
+    )
+
+    # --- Top-line KPIs ---
+    at_risk_pct = df["AtRisk"].mean()
+    thriving_pct = (df["ResilienceScore"] >= 70).mean()
+    avg_score = df["ResilienceScore"].mean()
+    median_reserves = df["OperatingReserveMonths"].median()
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Nonprofits", f"{len(df):,}")
-    c2.metric("% At Risk", f"{df['AtRisk'].mean():.1%}")
-    c3.metric("Avg Resilience", f"{df['ResilienceScore'].mean():.1f}")
-    c4.metric("States", int(df["State"].nunique()))
+    c1.metric("Total Nonprofits Analyzed", f"{len(df):,}")
+    c2.metric("At-Risk Rate", f"{at_risk_pct:.1%}")
+    c3.metric("Financially Strong (score 70+)", f"{thriving_pct:.1%}")
+    c4.metric("Median Months of Reserves", f"{median_reserves:.1f}")
 
-    hist = px.histogram(df, x="ResilienceScore", nbins=50, title="Resilience Score Distribution")
-    st.plotly_chart(hist, use_container_width=True)
+    # Key insight callout
+    if at_risk_pct > 0.20:
+        st.markdown(
+            f'<div class="insight-box-warn">'
+            f"<strong>Key finding:</strong> About <strong>1 in {int(round(1/at_risk_pct))}</strong> nonprofits "
+            f"show signs of financial distress — running large deficits, shrinking revenue, "
+            f"or dangerously low reserves. Targeted support could prevent closures."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
-    state_avg = df.groupby("State", as_index=False)["ResilienceScore"].mean()
+    # --- Resilience distribution ---
+    st.markdown('<div class="section-header">How Resilient Are U.S. Nonprofits?</div>', unsafe_allow_html=True)
+
+    col_hist, col_explain = st.columns([3, 1])
+    with col_hist:
+        hist_df = df.copy()
+        hist_df["Health Tier"] = pd.cut(
+            hist_df["ResilienceScore"],
+            bins=[0, 40, 70, 100],
+            labels=["At Risk (0-40)", "Moderate (40-70)", "Strong (70-100)"],
+        )
+        color_map = {
+            "At Risk (0-40)": "#ef4444",
+            "Moderate (40-70)": "#eab308",
+            "Strong (70-100)": "#22c55e",
+        }
+        hist = px.histogram(
+            hist_df,
+            x="ResilienceScore",
+            color="Health Tier",
+            color_discrete_map=color_map,
+            nbins=50,
+            labels={"ResilienceScore": "Resilience Score (0–100)", "count": "Number of Nonprofits"},
+        )
+        hist.update_layout(
+            bargap=0.05,
+            legend_title_text="",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+            yaxis_title="Number of Nonprofits",
+            margin=dict(t=10),
+        )
+        st.plotly_chart(hist, use_container_width=True)
+
+    with col_explain:
+        st.markdown("**What is the Resilience Score?**")
+        st.markdown(
+            "A 0–100 composite rating based on five financial fundamentals:\n\n"
+            "- **Operating reserves** (30 pts)\n"
+            "- **Revenue diversification** (20 pts)\n"
+            "- **Program spending efficiency** (20 pts)\n"
+            "- **Surplus margin** (15 pts)\n"
+            "- **Low debt** (15 pts)\n\n"
+            "Higher scores mean the organization is better positioned "
+            "to weather funding disruptions."
+        )
+
+    # --- Geographic view ---
+    st.markdown('<div class="section-header">Resilience Across the Country</div>', unsafe_allow_html=True)
+
+    state_avg = df.groupby("State", as_index=False).agg(
+        AvgResilience=("ResilienceScore", "mean"),
+        Count=("EIN", "count"),
+        AtRiskPct=("AtRisk", "mean"),
+    )
+    state_avg["Label"] = state_avg.apply(
+        lambda r: f"{r['State']}: Score {r['AvgResilience']:.0f} | {r['AtRiskPct']:.0%} at risk | {r['Count']:,} orgs",
+        axis=1,
+    )
     choropleth = px.choropleth(
         state_avg,
         locations="State",
         locationmode="USA-states",
-        color="ResilienceScore",
+        color="AvgResilience",
         scope="usa",
-        title="Average Resilience Score by State",
+        color_continuous_scale="RdYlGn",
+        hover_name="Label",
+        labels={"AvgResilience": "Avg. Resilience Score"},
+    )
+    choropleth.update_layout(
+        margin=dict(l=0, r=0, t=10, b=0),
+        coloraxis_colorbar=dict(title="Score", thickness=15),
+        geo=dict(bgcolor="rgba(0,0,0,0)"),
     )
     st.plotly_chart(choropleth, use_container_width=True)
 
+    # --- Sector breakdown ---
+    st.markdown('<div class="section-header">How Different Sectors Compare</div>', unsafe_allow_html=True)
 
+    sector_stats = (
+        df.groupby("Sector", as_index=False)
+        .agg(
+            Count=("EIN", "count"),
+            AvgResilience=("ResilienceScore", "mean"),
+            AtRiskPct=("AtRisk", "mean"),
+            MedianReserves=("OperatingReserveMonths", "median"),
+        )
+        .sort_values("AvgResilience", ascending=True)
+    )
+
+    bar = px.bar(
+        sector_stats,
+        y="Sector",
+        x="AvgResilience",
+        orientation="h",
+        color="AvgResilience",
+        color_continuous_scale="RdYlGn",
+        labels={"AvgResilience": "Average Resilience Score", "Sector": ""},
+        hover_data={"Count": True, "AtRiskPct": ":.1%", "MedianReserves": ":.1f"},
+    )
+    bar.update_layout(
+        showlegend=False,
+        coloraxis_showscale=False,
+        margin=dict(t=10),
+        yaxis=dict(tickfont=dict(size=12)),
+        height=max(400, len(sector_stats) * 30),
+    )
+    st.plotly_chart(bar, use_container_width=True)
+
+    strongest = sector_stats.iloc[-1]
+    weakest = sector_stats.iloc[0]
+    st.markdown(
+        f'<div class="insight-box">'
+        f"<strong>Sector comparison:</strong> <em>{strongest['Sector']}</em> has the highest average "
+        f"resilience ({strongest['AvgResilience']:.0f}/100), while <em>{weakest['Sector']}</em> "
+        f"scores lowest ({weakest['AvgResilience']:.0f}/100) with {weakest['AtRiskPct']:.0%} of organizations at risk."
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# PAGE 2 — Peer Benchmarking
+# ---------------------------------------------------------------------------
 def peer_page(df: pd.DataFrame) -> None:
     st.title("Peer Benchmarking")
-    org = st.selectbox("Select organization", sorted(df["OrgName"].dropna().unique())[:5000])
+    st.markdown(
+        "Compare any nonprofit's financial health against **similar organizations** "
+        "(same sector, size, and state). See where it excels and where it needs improvement."
+    )
+
+    org_names = sorted(df["OrgName"].dropna().unique())[:5000]
+    org = st.selectbox(
+        "Search for an organization",
+        org_names,
+        help="Type a name to search. We'll compare it to organizations of the same type, size, and location.",
+    )
+    if not org:
+        return
+
     row = df[df["OrgName"] == org].iloc[0]
     peer_id = row["PeerGroupID"]
     peer_df = df[df["PeerGroupID"] == peer_id]
-    metrics = ["ProgramExpenseRatio", "FundraisingRatio", "SurplusMargin", "OperatingReserveMonths", "DebtRatio"]
+
+    # Organization snapshot
+    st.markdown('<div class="section-header">Organization Snapshot</div>', unsafe_allow_html=True)
+
+    label, css_class = _resilience_label(row["ResilienceScore"])
+    col_info, col_score = st.columns([3, 1])
+    with col_info:
+        st.markdown(f"**{row['OrgName']}**")
+        st.markdown(
+            f"**Location:** {row.get('City', '—')}, {row['State']} &nbsp;|&nbsp; "
+            f"**Sector:** {row['Sector']} &nbsp;|&nbsp; "
+            f"**Size:** {row['SizeCategory']} &nbsp;|&nbsp; "
+            f"**Peer group:** {peer_df.shape[0]:,} similar organizations"
+        )
+    with col_score:
+        st.markdown(
+            f'<div style="text-align:center">'
+            f'<span style="font-size:2.4rem; font-weight:700; color:#1a2332">{row["ResilienceScore"]:.0f}</span>'
+            f'<span style="font-size:1rem; color:#6b7280">/100</span><br/>'
+            f'<span class="health-badge {css_class}">{label}</span>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Radar chart with friendly names
+    metrics = [
+        "ProgramExpenseRatio",
+        "FundraisingRatio",
+        "SurplusMargin",
+        "OperatingReserveMonths",
+        "DebtRatio",
+    ]
+    friendly = [FRIENDLY_METRIC_NAMES[m] for m in metrics]
     med = peer_df[metrics].median()
+
+    def _normalize(vals, meds, names):
+        normed_vals = []
+        normed_meds = []
+        for v, m, n in zip(vals, meds, names):
+            ref = max(abs(m), 0.001)
+            normed_vals.append(v / ref)
+            normed_meds.append(1.0)
+        return normed_vals, normed_meds
+
     vals = [row[m] for m in metrics]
+    nv, nm = _normalize(vals, [med[m] for m in metrics], friendly)
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=vals, theta=metrics, fill="toself", name="Selected Org"))
-    fig.add_trace(go.Scatterpolar(r=[med[m] for m in metrics], theta=metrics, fill="toself", name="Peer Median"))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True)), showlegend=True)
-    st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(peer_df[["OrgName", "State", "ResilienceScore"] + metrics].head(200), use_container_width=True)
+    st.markdown('<div class="section-header">How Does This Organization Compare?</div>', unsafe_allow_html=True)
+
+    col_radar, col_detail = st.columns([2, 1])
+    with col_radar:
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatterpolar(
+                r=nv + [nv[0]],
+                theta=friendly + [friendly[0]],
+                fill="toself",
+                name=org[:30],
+                fillcolor="rgba(59,130,246,0.15)",
+                line=dict(color="#3b82f6", width=2),
+            )
+        )
+        fig.add_trace(
+            go.Scatterpolar(
+                r=nm + [nm[0]],
+                theta=friendly + [friendly[0]],
+                fill="toself",
+                name="Peer Median",
+                fillcolor="rgba(156,163,175,0.1)",
+                line=dict(color="#9ca3af", width=2, dash="dot"),
+            )
+        )
+        fig.update_layout(
+            polar=dict(radialaxis=dict(visible=False)),
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5),
+            margin=dict(t=30, b=60),
+            height=400,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_detail:
+        st.markdown("**Metric-by-Metric Breakdown**")
+        for m, fn in zip(metrics, friendly):
+            org_val = row[m]
+            peer_med = med[m]
+            if pd.isna(org_val):
+                continue
+
+            pctile = row.get(f"{m}_PeerPctile", None)
+            flag = row.get(f"{m}_Flag", "Within Norm")
+
+            if m in ("FundraisingRatio", "DebtRatio"):
+                icon = "🟢" if org_val <= peer_med else "🔴"
+            else:
+                icon = "🟢" if org_val >= peer_med else "🔴"
+
+            pctile_str = f" (top {(1 - pctile):.0%})" if pctile and not pd.isna(pctile) else ""
+            st.markdown(f"{icon} **{fn}**: {org_val:.2f} vs. peer median {peer_med:.2f}{pctile_str}")
+
+        st.markdown("---")
+        st.markdown(
+            "_🟢 = better than peers &nbsp;|&nbsp; 🔴 = below peers_",
+        )
+
+    # Expandable explanations
+    with st.expander("What do these metrics mean?"):
+        for fn, expl in METRIC_EXPLANATIONS.items():
+            st.markdown(f"- **{fn}:** {expl}")
+
+    # Peer comparison table
+    st.markdown('<div class="section-header">Full Peer Group</div>', unsafe_allow_html=True)
+    display_cols = ["OrgName", "State", "ResilienceScore"] + metrics
+    rename_map = {m: FRIENDLY_METRIC_NAMES[m] for m in metrics}
+    peer_display = peer_df[display_cols].rename(columns=rename_map).head(200)
+    st.dataframe(
+        peer_display.style.format(
+            {FRIENDLY_METRIC_NAMES[m]: "{:.2f}" for m in metrics} | {"ResilienceScore": "{:.0f}"}
+        ),
+        use_container_width=True,
+        height=400,
+    )
 
 
+# ---------------------------------------------------------------------------
+# PAGE 3 — Resilience Explorer
+# ---------------------------------------------------------------------------
 def resilience_page(df: pd.DataFrame, metrics: dict) -> None:
     st.title("Resilience Explorer")
-    scatter = px.scatter(
-        df.sample(min(len(df), 5000), random_state=42),
-        x="LogRevenue",
-        y="ResilienceScore",
-        color="Sector",
-        hover_data=["OrgName", "State"],
-        title="Resilience vs Revenue (sampled)",
+    st.markdown(
+        "Understand **what drives financial resilience** and explore individual organizations. "
+        "Use the filters to find nonprofits that match your criteria."
     )
-    st.plotly_chart(scatter, use_container_width=True)
-    if metrics:
-        st.subheader("Model Snapshot")
-        st.json(metrics)
-    st.dataframe(df[["EIN", "OrgName", "State", "Sector", "ResilienceScore", "AtRisk", "AtRiskProbability"]].head(200))
+
+    # Risk tier summary
+    st.markdown('<div class="section-header">Risk Tiers at a Glance</div>', unsafe_allow_html=True)
+
+    tiers = {
+        "Strong (70–100)": (df["ResilienceScore"] >= 70).sum(),
+        "Moderate (40–70)": ((df["ResilienceScore"] >= 40) & (df["ResilienceScore"] < 70)).sum(),
+        "At Risk (0–40)": (df["ResilienceScore"] < 40).sum(),
+    }
+    tier_colors = {"Strong (70–100)": "#22c55e", "Moderate (40–70)": "#eab308", "At Risk (0–40)": "#ef4444"}
+
+    t1, t2, t3 = st.columns(3)
+    for col, (tier_name, count) in zip([t1, t2, t3], tiers.items()):
+        pct = count / len(df)
+        col.metric(tier_name, f"{count:,}", f"{pct:.1%} of all nonprofits")
+
+    # What drives resilience?
+    if metrics and "feature_importances" in metrics:
+        st.markdown(
+            '<div class="section-header">What Drives Financial Resilience?</div>',
+            unsafe_allow_html=True,
+        )
+
+        imp = metrics["feature_importances"]
+        imp_df = pd.DataFrame(
+            [
+                {"Factor": FRIENDLY_METRIC_NAMES.get(k, k.replace("_", " ").title()), "Importance": v}
+                for k, v in imp.items()
+            ]
+        ).sort_values("Importance", ascending=True)
+
+        top_10 = imp_df.tail(10)
+
+        col_chart, col_text = st.columns([2, 1])
+        with col_chart:
+            fig = px.bar(
+                top_10,
+                y="Factor",
+                x="Importance",
+                orientation="h",
+                color="Importance",
+                color_continuous_scale="Blues",
+                labels={"Importance": "Relative Importance", "Factor": ""},
+            )
+            fig.update_layout(
+                showlegend=False,
+                coloraxis_showscale=False,
+                margin=dict(t=10),
+                height=350,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_text:
+            top3 = imp_df.tail(3)["Factor"].tolist()[::-1]
+            st.markdown("**Key takeaway:**")
+            st.markdown(
+                f"The three strongest predictors of financial resilience are "
+                f"**{top3[0]}**, **{top3[1]}**, and **{top3[2]}**.\n\n"
+                f"Organizations that maintain healthy surpluses, steady revenue growth, "
+                f"and adequate cash reserves are far more likely to survive funding disruptions."
+            )
+
+    # Interactive scatter
+    st.markdown('<div class="section-header">Explore Individual Organizations</div>', unsafe_allow_html=True)
+
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        sectors = ["All Sectors"] + sorted(df["Sector"].dropna().unique().tolist())
+        sel_sector = st.selectbox("Filter by sector", sectors, key="res_sector")
+    with col_f2:
+        sizes = ["All Sizes"] + sorted(df["SizeCategory"].dropna().unique().tolist())
+        sel_size = st.selectbox("Filter by size", sizes, key="res_size")
+    with col_f3:
+        states_list = ["All States"] + sorted(df["State"].dropna().unique().tolist())
+        sel_state = st.selectbox("Filter by state", states_list, key="res_state")
+
+    filtered = df.copy()
+    if sel_sector != "All Sectors":
+        filtered = filtered[filtered["Sector"] == sel_sector]
+    if sel_size != "All Sizes":
+        filtered = filtered[filtered["SizeCategory"] == sel_size]
+    if sel_state != "All States":
+        filtered = filtered[filtered["State"] == sel_state]
+
+    sample = filtered.sample(min(len(filtered), 5000), random_state=42) if len(filtered) > 0 else filtered
+
+    if len(sample) > 0:
+        sample["Revenue"] = sample["TotalRevenueCY"].apply(_fmt_dollars)
+        sample["Health"] = sample["ResilienceScore"].apply(lambda s: _resilience_label(s)[0])
+
+        scatter = px.scatter(
+            sample,
+            x="TotalRevenueCY",
+            y="ResilienceScore",
+            color="Health",
+            color_discrete_map={"Strong": "#22c55e", "Moderate": "#eab308", "At Risk": "#ef4444"},
+            hover_data={"OrgName": True, "State": True, "Revenue": True, "TotalRevenueCY": False},
+            labels={
+                "TotalRevenueCY": "Total Revenue",
+                "ResilienceScore": "Resilience Score (0–100)",
+            },
+            log_x=True,
+            opacity=0.6,
+        )
+        scatter.update_layout(
+            legend_title_text="",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+            margin=dict(t=30),
+            height=450,
+        )
+        st.plotly_chart(scatter, use_container_width=True)
+
+    # Searchable table
+    st.markdown("**Browse organizations:**")
+    show_cols = ["OrgName", "State", "Sector", "SizeCategory", "ResilienceScore", "AtRisk", "AtRiskProbability"]
+    rename = {
+        "OrgName": "Organization",
+        "SizeCategory": "Size",
+        "ResilienceScore": "Resilience Score",
+        "AtRisk": "At Risk?",
+        "AtRiskProbability": "Risk Probability",
+    }
+    display_df = (
+        filtered[show_cols]
+        .rename(columns=rename)
+        .sort_values("Resilience Score", ascending=True)
+        .head(500)
+    )
+    display_df["At Risk?"] = display_df["At Risk?"].map({0: "No", 1: "Yes"})
+    st.dataframe(
+        display_df.style.format({"Resilience Score": "{:.0f}", "Risk Probability": "{:.1%}"}),
+        use_container_width=True,
+        height=400,
+    )
 
 
+# ---------------------------------------------------------------------------
+# PAGE 4 — Stress Test Simulator
+# ---------------------------------------------------------------------------
 def simulation_page(sims: pd.DataFrame) -> None:
     st.title("Stress Test Simulator")
-    scenario = st.selectbox("Scenario", sorted(sims["Scenario"].unique()))
-    sdf = sims[sims["Scenario"] == scenario]
-    status_dist = sdf["PostShock_Status"].value_counts(normalize=True).reset_index()
-    pie = px.pie(status_dist, names="PostShock_Status", values="proportion", title=f"Post-shock status: {scenario}")
-    st.plotly_chart(pie, use_container_width=True)
-    sector = (
-        sdf.groupby(["Sector", "PostShock_Status"], as_index=False)
-        .size()
-        .pivot(index="Sector", columns="PostShock_Status", values="size")
-        .fillna(0)
+    st.markdown(
+        "See how nonprofits would fare under **real-world funding disruptions** — "
+        "from government grant cuts to economic recessions."
     )
-    st.dataframe(sector.head(50), use_container_width=True)
+
+    scenario_descriptions = {
+        "Grant Shock (-30%)": "What if donations and grants dropped by 30%? This simulates a major donor withdrawal or economic downturn that reduces charitable giving.",
+        "Gov Grant Shock (-50%)": "What if government funding was cut in half? This models policy changes or budget sequestration affecting government-dependent nonprofits.",
+        "Program Rev Shock (-25%)": "What if earned revenue from programs fell by 25%? This simulates reduced demand or pandemic-like service disruptions.",
+        "Investment Shock (-40%)": "What if investment returns dropped 40%? This models a stock market crash affecting endowment-dependent organizations.",
+        "Combined Recession (-20%)": "What if all revenue sources dropped 20% simultaneously? This models a broad economic recession.",
+    }
+
+    scenarios = sorted(sims["Scenario"].unique())
+    scenario = st.selectbox("Choose a scenario to explore", scenarios)
+
+    desc = scenario_descriptions.get(scenario, "")
+    if desc:
+        st.markdown(f'<div class="insight-box">{desc}</div>', unsafe_allow_html=True)
+
+    sdf = sims[sims["Scenario"] == scenario]
+
+    # Impact summary
+    st.markdown('<div class="section-header">Overall Impact</div>', unsafe_allow_html=True)
+
+    status_counts = sdf["PostShock_Status"].value_counts()
+    total = len(sdf)
+
+    ordered_statuses = [
+        "Critical (<3mo reserves)",
+        "At Risk (3-12mo reserves)",
+        "Stressed (>12mo reserves)",
+        "Survives (Surplus)",
+    ]
+
+    m1, m2, m3, m4 = st.columns(4)
+    for col, status in zip([m1, m2, m3, m4], ordered_statuses):
+        count = status_counts.get(status, 0)
+        pct = count / total if total else 0
+        short_label = status.split("(")[0].strip()
+        col.metric(short_label, f"{count:,}", f"{pct:.1%}")
+
+    critical_pct = status_counts.get("Critical (<3mo reserves)", 0) / total if total else 0
+    at_risk_pct = status_counts.get("At Risk (3-12mo reserves)", 0) / total if total else 0
+    combined_danger = critical_pct + at_risk_pct
+    if combined_danger > 0.1:
+        st.markdown(
+            f'<div class="insight-box-warn">'
+            f"<strong>Impact:</strong> Under this scenario, <strong>{combined_danger:.1%}</strong> of nonprofits "
+            f"would face serious financial distress (critical or at risk). That's roughly "
+            f"<strong>{int(round(combined_danger * total)):,}</strong> organizations that could struggle to "
+            f"maintain services."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Status distribution chart
+    col_pie, col_bar = st.columns(2)
+
+    with col_pie:
+        status_dist = sdf["PostShock_Status"].value_counts().reset_index()
+        status_dist.columns = ["Status", "Count"]
+        fig_pie = px.pie(
+            status_dist,
+            names="Status",
+            values="Count",
+            color="Status",
+            color_discrete_map=STATUS_COLORS,
+            hole=0.4,
+        )
+        fig_pie.update_layout(
+            margin=dict(t=10),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+        )
+        fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    with col_bar:
+        sector_impact = (
+            sdf.groupby(["Sector", "PostShock_Status"], as_index=False)
+            .size()
+        )
+        sector_totals = sdf.groupby("Sector").size().reset_index(name="Total")
+        sector_impact = sector_impact.merge(sector_totals, on="Sector")
+        sector_impact["Percentage"] = sector_impact["size"] / sector_impact["Total"]
+
+        fig_bar = px.bar(
+            sector_impact,
+            y="Sector",
+            x="Percentage",
+            color="PostShock_Status",
+            orientation="h",
+            color_discrete_map=STATUS_COLORS,
+            labels={"Percentage": "Share of Sector", "PostShock_Status": "Post-Shock Status", "Sector": ""},
+            barmode="stack",
+        )
+        fig_bar.update_layout(
+            legend_title_text="",
+            legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+            margin=dict(t=10),
+            height=max(350, sdf["Sector"].nunique() * 28),
+            xaxis_tickformat=".0%",
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    # Recovery timeline
+    recovery_data = sdf[sdf["RecoveryYears"].notna() & (sdf["RecoveryYears"] > 0)]
+    if len(recovery_data) > 0:
+        st.markdown('<div class="section-header">Recovery Timeline</div>', unsafe_allow_html=True)
+        avg_recovery = recovery_data["RecoveryYears"].mean()
+        med_recovery = recovery_data["RecoveryYears"].median()
+        st.markdown(
+            f"For organizations that would go into deficit, the **median recovery time** is "
+            f"**{med_recovery:.1f} years** (average: {avg_recovery:.1f} years), assuming a 5% annual revenue recovery rate."
+        )
+
+        fig_recov = px.histogram(
+            recovery_data,
+            x="RecoveryYears",
+            nbins=20,
+            labels={"RecoveryYears": "Years to Recover", "count": "Number of Organizations"},
+            color_discrete_sequence=["#6366f1"],
+        )
+        fig_recov.update_layout(margin=dict(t=10), yaxis_title="Number of Organizations")
+        st.plotly_chart(fig_recov, use_container_width=True)
 
 
+# ---------------------------------------------------------------------------
+# PAGE 5 — Hidden Gems Finder
+# ---------------------------------------------------------------------------
 def gems_page() -> None:
     st.title("Hidden Gems Finder")
-    gems = pd.read_csv("data/hidden_gems.csv", low_memory=False)
-    state_options = ["All"] + sorted(gems["State"].dropna().unique().tolist())
-    sel_state = st.selectbox("State", state_options)
-    if sel_state != "All":
-        gems = gems[gems["State"] == sel_state]
-    st.dataframe(gems.head(300), use_container_width=True)
-    fig = px.scatter(
-        gems,
-        x="TotalRevenueCY",
-        y="ImpactEfficiencyScore",
-        color="Sector",
-        hover_data=["OrgName", "DonationToStabilize"],
-        title="Budget vs Impact Efficiency",
+    st.markdown(
+        "Discover **small but mighty nonprofits** — organizations that deliver outsized community impact "
+        "relative to their budget. These are the best candidates for targeted philanthropic investment."
     )
-    st.plotly_chart(fig, use_container_width=True)
+
+    gems = pd.read_csv("data/hidden_gems.csv", low_memory=False)
+
+    # Top-line stats
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Hidden Gems Identified", f"{len(gems):,}")
+    median_donation = gems["DonationToStabilize"].median()
+    c2.metric("Median Donation to Stabilize", _fmt_dollars(median_donation))
+    c3.metric("Avg. Impact Efficiency Score", f"{gems['ImpactEfficiencyScore'].mean():.0f}/100")
+
+    st.markdown(
+        f'<div class="insight-box-good">'
+        f"<strong>What is a Hidden Gem?</strong> These are nonprofits that score in the "
+        f"<strong>top 20%</strong> for impact efficiency but have <strong>below-median budgets</strong>. "
+        f"They're growing, financially sustainable, and poised to do more with targeted support."
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Filters
+    st.markdown('<div class="section-header">Find Gems That Match Your Interests</div>', unsafe_allow_html=True)
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        state_options = ["All States"] + sorted(gems["State"].dropna().unique().tolist())
+        sel_state = st.selectbox("State", state_options, key="gems_state")
+    with col_f2:
+        sector_options = ["All Sectors"] + sorted(gems["Sector"].dropna().unique().tolist())
+        sel_sector = st.selectbox("Sector", sector_options, key="gems_sector")
+    with col_f3:
+        max_donation = st.slider(
+            "Max donation to stabilize",
+            min_value=0,
+            max_value=int(gems["DonationToStabilize"].quantile(0.95)),
+            value=int(gems["DonationToStabilize"].quantile(0.95)),
+            step=10000,
+            format="$%d",
+            help="Filter to organizations where a smaller donation could bring reserves to 6 months.",
+        )
+
+    filtered = gems.copy()
+    if sel_state != "All States":
+        filtered = filtered[filtered["State"] == sel_state]
+    if sel_sector != "All Sectors":
+        filtered = filtered[filtered["Sector"] == sel_sector]
+    filtered = filtered[filtered["DonationToStabilize"] <= max_donation]
+
+    st.markdown(f"**Showing {len(filtered):,} organizations** matching your filters")
+
+    # Top gems cards
+    if len(filtered) > 0:
+        top_gems = filtered.nlargest(6, "ImpactEfficiencyScore")
+
+        cols = st.columns(3)
+        for i, (_, gem) in enumerate(top_gems.iterrows()):
+            with cols[i % 3]:
+                rl, rc = _resilience_label(gem["ResilienceScore"])
+                donation_text = (
+                    "Already stable"
+                    if gem["DonationToStabilize"] == 0
+                    else f'{_fmt_dollars(gem["DonationToStabilize"])} to reach 6-month reserves'
+                )
+
+                st.markdown(
+                    f"""<div style="background:#fafbfc; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:12px">
+                    <div style="font-weight:700; font-size:1rem; color:#1a2332; margin-bottom:4px">{gem['OrgName'][:50]}</div>
+                    <div style="font-size:0.8rem; color:#6b7280; margin-bottom:10px">{gem.get('City', '')} {gem['State']} · {gem['Sector']}</div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px">
+                        <div><span style="font-size:0.75rem; color:#9ca3af">Impact Score</span><br/><strong>{gem['ImpactEfficiencyScore']:.0f}/100</strong></div>
+                        <div><span style="font-size:0.75rem; color:#9ca3af">Resilience</span><br/><strong><span class="health-badge {rc}">{rl}</span></strong></div>
+                    </div>
+                    <div style="font-size:0.8rem; color:#374151; margin-top:6px">💡 {donation_text}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
+    # Scatter plot
+    st.markdown('<div class="section-header">Budget vs. Impact Efficiency</div>', unsafe_allow_html=True)
+
+    if len(filtered) > 0:
+        plot_df = filtered.head(3000)
+        plot_df = plot_df.copy()
+        plot_df["Revenue"] = plot_df["TotalRevenueCY"].apply(_fmt_dollars)
+        plot_df["Donation Needed"] = plot_df["DonationToStabilize"].apply(_fmt_dollars)
+
+        fig = px.scatter(
+            plot_df,
+            x="TotalRevenueCY",
+            y="ImpactEfficiencyScore",
+            color="Sector",
+            size="ResilienceScore",
+            size_max=14,
+            hover_data={
+                "OrgName": True,
+                "Revenue": True,
+                "Donation Needed": True,
+                "TotalRevenueCY": False,
+                "ResilienceScore": True,
+            },
+            labels={
+                "TotalRevenueCY": "Total Revenue",
+                "ImpactEfficiencyScore": "Impact Efficiency Score",
+            },
+            log_x=True,
+            opacity=0.65,
+        )
+        fig.update_layout(
+            legend_title_text="",
+            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+            margin=dict(t=10),
+            height=500,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Full table
+    st.markdown('<div class="section-header">Full List</div>', unsafe_allow_html=True)
+    table_cols = [
+        "OrgName", "State", "Sector", "TotalRevenueCY",
+        "ImpactEfficiencyScore", "ResilienceScore",
+        "ProgramExpenseRatio", "RevenueGrowthPct",
+        "OperatingReserveMonths", "DonationToStabilize",
+    ]
+    rename_map = {
+        "OrgName": "Organization",
+        "TotalRevenueCY": "Annual Revenue",
+        "ImpactEfficiencyScore": "Impact Score",
+        "ResilienceScore": "Resilience",
+        "ProgramExpenseRatio": "Program Spending %",
+        "RevenueGrowthPct": "Revenue Growth",
+        "OperatingReserveMonths": "Reserve Months",
+        "DonationToStabilize": "Donation to Stabilize",
+    }
+    display = filtered[table_cols].rename(columns=rename_map).head(300)
+    st.dataframe(
+        display.style.format(
+            {
+                "Annual Revenue": "${:,.0f}",
+                "Impact Score": "{:.0f}",
+                "Resilience": "{:.0f}",
+                "Program Spending %": "{:.1%}",
+                "Revenue Growth": "{:+.1%}",
+                "Reserve Months": "{:.1f}",
+                "Donation to Stabilize": "${:,.0f}",
+            }
+        ),
+        use_container_width=True,
+        height=400,
+    )
 
 
+# ---------------------------------------------------------------------------
+# Main navigation
+# ---------------------------------------------------------------------------
 def main() -> None:
     df, _peers, sims, metrics = load_data()
-    page = st.sidebar.selectbox(
-        "Navigate",
+
+    st.sidebar.markdown("## Navigation")
+    page = st.sidebar.radio(
+        "Go to",
         [
             "Executive Overview",
             "Peer Benchmarking",
@@ -128,7 +924,20 @@ def main() -> None:
             "Stress Test Simulator",
             "Hidden Gems Finder",
         ],
+        label_visibility="collapsed",
     )
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(
+        "**About this tool**\n\n"
+        "Built for Aggie Hacks 2026. Analyzes IRS Form 990 data "
+        "(2018–2024) to help funders and nonprofit leaders make "
+        "data-driven decisions."
+    )
+    st.sidebar.markdown(
+        f"*{len(df):,} organizations · {int(df['State'].nunique())} states*"
+    )
+
     if page == "Executive Overview":
         executive_page(df)
     elif page == "Peer Benchmarking":
