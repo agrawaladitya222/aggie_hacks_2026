@@ -1414,7 +1414,7 @@ def main() -> None:
     st.sidebar.markdown(
         "**About this tool**\n\n"
         "Built for Aggie Hacks 2026. Analyzes IRS Form 990 data "
-        "(2019–2025) to help funders and nonprofit leaders make "
+        "for each tax year (2018–2024) to help funders and nonprofit leaders make "
         "data-driven decisions."
     )
     st.sidebar.markdown(
