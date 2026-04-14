@@ -1,5 +1,6 @@
 # Demo Video Script — Nonprofit Financial Resilience Dashboard
-**Target length: \~5 minutes | Speaking pace: \~140 wpm (~700 words)**
+
+**Target length: 5 minutes | Speaking pace: 140 wpm (~700 words)**
 
 ---
 
@@ -59,11 +60,9 @@
 
 > The Stress Test Simulator is where analysis becomes scenario planning. We built five shock models that let you adjust the severity in real time.
 >
-> Let me start with the **Government Grant Shock**. I'll set it to 50%. The description box explains that only organizations receiving government grants are exposed — this is why a large government cut can paradoxically show *fewer* at-risk nonprofits than a broad recession. The sectors hit hardest are **Crime & Legal at 39% government-grant dependency, Mental Health & Crisis at 31%, and Housing & Shelter at 21%**. Notice how the stacked bar on the right turns these sectors red.
+> Let me start with the **Government Grant Shock**. I'll set it to 50%. The description box explains that only organizations receiving government grants are exposed — this is why a large government cut can paradoxically show *fewer* at-risk nonprofits than a broad recession. The sectors hit hardest are **Crime & Legal at 44% government-grant dependency, Mental Health & Crisis at 29%, and Public Safety and Disaster Relief at 21%**. 
 >
-> Now watch what happens when I switch to **Combined Recession** and sync all sliders to 35%. Every revenue stream drops together — grants, government funding, program revenue, and investments. This hits more organizations because nobody is insulated. The recovery histogram below shows how long it would take for affected nonprofits to claw back to solvency at a 5% annual growth rate — you can see most cluster between 3 and 8 years. That's a planning horizon Fairlight can use when advising clients about long-term grant commitments.
->
-> The critical threshold we found: **once grant dependency exceeds 80% and reserves drop below 3 months, organizations almost universally fall to critical status under any shock scenario.** That's 36% of nonprofits that are grant-heavy, and 19% with under 3 months of reserves — the overlap is where intervention is most urgent.
+> Now watch what happens when I switch to **Combined Recession** and sync all sliders to 35%. Every revenue stream drops together — grants, government funding, program revenue, and investments. This hits more organizations because nobody is insulated. The recovery histogram below shows how long it would take for affected nonprofits to claw back to solvency at a 5% annual growth rate — you can see most cluster between 10 and 14 years. That's a planning horizon that can be used when advising clients about long-term grant commitments.
 
 **[ACTION: Select "Gov Grant Shock" → drag slider to 50% → show donut chart + sector stacked bar → switch to "Combined Recession" → sync at 35% → scroll to recovery histogram → pause on the insight callout box]**
 
@@ -75,9 +74,11 @@
 >
 > Our Impact Efficiency Score ranks every nonprofit across five dimensions: program spending efficiency, revenue growth, program leverage — how much mission output per donor dollar — community reach relative to budget, and financial sustainability. We identify **27,208 hidden gems**: organizations in the top 20% for impact efficiency but with below-median budgets, positive growth, and a resilience score above 40.
 >
-> The key finding: **81% of these gems already have six-plus months of reserves** — they're efficient *and* stable, just small. They don't need rescuing; they need fuel. For the 19% that do need stabilization, the **median donation to reach 6-month reserves is about $302,000** — a concrete, fundable number.
+> The key finding: **Most of these gems already have six-plus months of reserves** — they're efficient *and* stable, just small. They don't need rescuing; they need fuel. For the few that do need stabilization, the **median donation to reach 6-month reserves is about $302,000** — a concrete, fundable number.
 >
-> The top sectors for hidden gems are **Human Services with over 6,000 gems and Education with 5,700**. California, Texas, and New York lead by state. Each card shows the exact donation-to-stabilize figure, and clicking Score Breakdown reveals exactly how the score was calculated — full transparency for due diligence.
+> Each card shows the exact donation-to-stabilize figure, and clicking Score Breakdown reveals exactly how the score was calculated — full transparency for due diligence.
+>
+> The top sectors for hidden gems are **Human Services with over 6,000 gems and Education with 5,700**.  
 
 **[ACTION: Show KPI cards at top → click Score Breakdown on a top gem → show the 5-component breakdown → filter to a specific state → hover on scatter plot → scroll the table]**
 

@@ -884,6 +884,111 @@ def simulation_page(master: pd.DataFrame) -> None:
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
+    # Most Exposed Sectors — top 3 by dependency on shocked stream
+    SCENARIO_DEP_COL: dict[str, str | list[str]] = {
+        "Grant Shock": "GrantDependencyPct",
+        "Gov Grant Shock": "GovGrantPct",
+        "Program Revenue Shock": "ProgramRevenuePct",
+        "Investment Shock": "InvestmentRevenuePct",
+        "Combined Recession": ["GrantDependencyPct", "GovGrantPct", "ProgramRevenuePct", "InvestmentRevenuePct"],
+    }
+
+    STREAM_LABELS = {
+        "GovernmentGrantsAmt": "Government Grants",
+        "ContributionsGrantsCY": "Private Donations & Grants",
+        "ProgramServiceRevCY": "Program Service Revenue",
+        "InvestmentIncomeCY": "Investment Income",
+        "OtherRevenueCY": "Other Revenue",
+    }
+
+    dep_col = SCENARIO_DEP_COL.get(scenario)
+
+    if dep_col is not None and "Sector" in master.columns:
+        st.markdown('<div class="section-header">Most Exposed Sectors — Funding Stream Breakdown</div>', unsafe_allow_html=True)
+
+        sector_base = master[master["TotalRevenueCY"] > 0].copy()
+
+        # Compute dependency per sector
+        if isinstance(dep_col, list):
+            sector_base["_dep"] = sector_base[dep_col].mean(axis=1)
+            dep_label = "Avg. Dependency on Shocked Streams"
+        else:
+            sector_base["_dep"] = sector_base[dep_col]
+            dep_label = f"Avg. {STREAM_LABELS.get(list(config['streams'].keys())[0], dep_col)} Dependency"
+
+        sector_dep = (
+            sector_base.groupby("Sector")["_dep"]
+            .mean()
+            .sort_values(ascending=False)
+            .head(3)
+        )
+        top3_sectors = sector_dep.index.tolist()
+
+        # Build funding stream breakdown for those 3 sectors
+        stream_cols = list(STREAM_LABELS.keys())
+        available_streams = [c for c in stream_cols if c in master.columns]
+
+        breakdown_rows = []
+        for sec in top3_sectors:
+            sec_data = sector_base[sector_base["Sector"] == sec]
+            total_rev = sec_data["TotalRevenueCY"].mean()
+            for col in available_streams:
+                avg_amt = sec_data[col].fillna(0).mean()
+                pct = avg_amt / total_rev if total_rev > 0 else 0
+                breakdown_rows.append({
+                    "Sector": sec,
+                    "Stream": STREAM_LABELS[col],
+                    "Pct": pct,
+                    "IsShocked": col in config["streams"],
+                })
+
+        breakdown_df = pd.DataFrame(breakdown_rows)
+
+        # Color palette: shocked stream gets a vivid accent, others get muted blues/grays
+        STREAM_COLORS = {
+            "Government Grants": "#ef4444",
+            "Private Donations & Grants": "#f97316",
+            "Program Service Revenue": "#6366f1",
+            "Investment Income": "#14b8a6",
+            "Other Revenue": "#94a3b8",
+        }
+        shocked_stream_names = {STREAM_LABELS[c] for c in config["streams"] if c in STREAM_LABELS}
+
+        fig_breakdown = px.bar(
+            breakdown_df,
+            x="Pct",
+            y="Sector",
+            color="Stream",
+            orientation="h",
+            barmode="stack",
+            color_discrete_map=STREAM_COLORS,
+            labels={"Pct": "Share of Total Revenue", "Stream": "Revenue Stream", "Sector": ""},
+            text=breakdown_df["Pct"].apply(lambda v: f"{v:.0%}" if v >= 0.05 else ""),
+        )
+        fig_breakdown.update_traces(textposition="inside", insidetextanchor="middle")
+        fig_breakdown.update_layout(
+            margin=dict(t=30, b=10),
+            xaxis_tickformat=".0%",
+            height=260,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.55, xanchor="center", x=0.5),
+            legend_title_text="",
+        )
+        st.plotly_chart(fig_breakdown, use_container_width=True)
+
+        # Dependency callout
+        dep_lines = []
+        for sec in top3_sectors:
+            dep_pct = sector_dep[sec]
+            shocked_names = " & ".join(shocked_stream_names) if shocked_stream_names else "shocked streams"
+            dep_lines.append(f"<strong>{sec}</strong> ({dep_pct:.0%} {shocked_names} dependency)")
+        st.markdown(
+            f'<div class="insight-box-warn">'
+            f"<strong>Hardest-hit sectors:</strong> {' — '.join(dep_lines)}. "
+            f"These sectors face the greatest direct revenue loss because of their reliance on the shocked funding stream."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     # Recovery timeline
     recovery_data = sdf[sdf["RecoveryYears"].notna() & (sdf["RecoveryYears"] > 0)]
     if len(recovery_data) > 0:
@@ -921,8 +1026,9 @@ def gems_page() -> None:
     # Top-line stats
     c1, c2, c3 = st.columns(3)
     c1.metric("Hidden Gems Identified", f"{len(gems):,}")
-    median_donation = gems["DonationToStabilize"].median()
-    c2.metric("Median Donation to Stabilize", _fmt_dollars(median_donation))
+    needs_stabilization = gems[gems["DonationToStabilize"] > 0]["DonationToStabilize"]
+    median_donation = needs_stabilization.median() if len(needs_stabilization) > 0 else 0
+    c2.metric("Median Donation to Stabilize\n(orgs that need it)", _fmt_dollars(median_donation))
     c3.metric("Avg. Impact Efficiency Score", f"{gems['ImpactEfficiencyScore'].mean():.0f}/100")
 
     st.markdown(
