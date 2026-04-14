@@ -1097,21 +1097,10 @@ def brand_map_page(df: pd.DataFrame) -> None:
         ))
 
     # --- Sector average crosshairs (no diamond marker) ---
-    fig.add_shape(type="line", x0=avg_x, x1=avg_x, y0=0, y1=36,
+    fig.add_shape(type="line", xref="x", yref="paper", x0=avg_x, x1=avg_x, y0=0, y1=1,
                   line=dict(color="#6366f1", width=2.5, dash="dash"))
-    fig.add_shape(type="line", x0=0, x1=1, y0=avg_y, y1=avg_y,
+    fig.add_shape(type="line", xref="paper", yref="y", x0=0, x1=1, y0=avg_y, y1=avg_y,
                   line=dict(color="#6366f1", width=2.5, dash="dash"))
-    fig.add_annotation(
-        x=avg_x, y=avg_y,
-        xanchor="left", yanchor="bottom",
-        xshift=8, yshift=6,
-        text=f"Median ({avg_x:.0%} efficiency, {avg_y:.1f} mo. reserves)",
-        showarrow=False,
-        font=dict(size=10, color="#6366f1"),
-        bgcolor="rgba(255,255,255,0.85)",
-        borderpad=3,
-    )
-
     # --- Quadrant labels ---
     _dark_mode = st.get_option("theme.base") == "dark"
     _ql_text_color = "#f0f0f0" if _dark_mode else "#111111"
@@ -1172,6 +1161,7 @@ def brand_map_page(df: pd.DataFrame) -> None:
     )
 
     st.plotly_chart(fig, use_container_width=True)
+    st.markdown(f'<p style="color:#6366f1; font-size:0.85rem;">Median: {avg_x:.0%} program efficiency · {avg_y:.1f} months of reserves</p>', unsafe_allow_html=True)
 
     # ---------- Quadrant insights ----------
     if len(plot_df) > 50:
@@ -1228,9 +1218,9 @@ def brand_map_page(df: pd.DataFrame) -> None:
         color = _TIER_COLORS[tier]
         col.markdown(
             f"""<div style="background:{color}22; border:2px solid {color}; border-radius:12px; padding:18px 20px;">
-                <div style="color:#e0e0e0; font-size:0.85rem; font-weight:500; margin-bottom:4px;">{tier}</div>
-                <div style="color:#ffffff; font-size:1.9rem; font-weight:700; line-height:1.1;">{count:,}</div>
-                <div style="color:#cccccc; font-size:0.82rem; margin-top:4px;">{pct:.1%} of filtered orgs</div>
+                <div style="color:#000000; font-size:0.85rem; font-weight:500; margin-bottom:4px;">{tier}</div>
+                <div style="color:#000000; font-size:1.9rem; font-weight:700; line-height:1.1;">{count:,}</div>
+                <div style="color:#000000; font-size:0.82rem; margin-top:4px;">{pct:.1%} of filtered orgs</div>
             </div>""",
             unsafe_allow_html=True,
         )
