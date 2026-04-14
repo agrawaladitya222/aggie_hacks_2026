@@ -24,3 +24,5 @@ outputs/*
 
 # Keep raw input data under version control
 !data/data_csv/
+
+data/TEOS IRS Data/
