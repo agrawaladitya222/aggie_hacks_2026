@@ -1062,6 +1062,335 @@ def gems_page() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PAGE 6 — Brand Map
+# ---------------------------------------------------------------------------
+_TIER_COLORS = {
+    "Stable": "#2ecc71",
+    "Watch": "#f39c12",
+    "At Risk": "#e74c3c",
+}
+_TIER_ORDER = ["Stable", "Watch", "At Risk"]
+
+
+@st.cache_data
+def _prepare_brand_map_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Pre-compute all expensive columns once at load time."""
+    out = df[df["ProgramSvcExpenses"].notna() & (df["ProgramSvcExpenses"] > 0)].copy()
+
+    # ResilienceTier
+    if "ResilienceScore" in out.columns:
+        out["ResilienceTier"] = pd.cut(
+            out["ResilienceScore"],
+            bins=[-np.inf, 40, 70, np.inf],
+            labels=["At Risk", "Watch", "Stable"],
+        ).astype(str)
+    else:
+        conditions = [
+            (out["OperatingReserveMonths"] >= 6) & (out["SurplusMargin"] >= 0),
+            (out["OperatingReserveMonths"] >= 3) | (out["SurplusMargin"] >= -0.05),
+        ]
+        out["ResilienceTier"] = np.select(conditions, ["Stable", "Watch"], default="At Risk")
+
+    # Dot size: log-scaled from revenue (5–25 range)
+    log_rev = np.log1p(out["TotalRevenueCY"].clip(lower=0))
+    log_max = log_rev.max() if log_rev.max() > 0 else 1
+    out["DotSize"] = (log_rev / log_max * 20 + 5).fillna(5)
+
+    # Vectorised hover formatting (no .apply loops)
+    rev = out["TotalRevenueCY"]
+    out["_RevFmt"] = np.where(rev.notna(), "$" + rev.map("{:,.0f}".format), "N/A")
+
+    sur = out["SurplusMargin"] * 100
+    out["_SurplusFmt"] = np.where(sur.notna(), sur.map("{:.1f}%".format), "N/A")
+
+    gd = out["GrantDependencyPct"] * 100
+    out["_GrantDepFmt"] = np.where(gd.notna(), gd.map("{:.1f}%".format), "N/A")
+
+    out["_ReservesCapped"] = out["OperatingReserveMonths"].clip(upper=36)
+
+    return out
+
+
+def brand_map_page(df: pd.DataFrame) -> None:
+    st.title("Brand Map: Mission Efficiency vs. Financial Runway")
+    st.markdown("Mapping nonprofit financial health across two dimensions: **mission spending efficiency** and **operational runway**.")
+    st.caption("Each circle is one nonprofit. Bigger circles are larger organizations by annual revenue. Color shows financial resilience tier.")
+
+    with st.expander("What do the hover fields mean?"):
+        st.markdown(
+            "**Surplus Margin** — the percentage of revenue left over after expenses. "
+            "A positive number means the organization is bringing in more than it spends (a surplus). "
+            "A negative number means it is spending more than it earns (a deficit).\n\n"
+            "**Resilience Tier** — a summary rating based on reserves, revenue mix, program spending, surplus, and debt:\n"
+            "- 🟢 **Stable** — financially healthy, likely to weather a funding disruption\n"
+            "- 🟡 **Watch** — showing early warning signs; not in crisis but worth monitoring\n"
+            "- 🔴 **At Risk** — low reserves, deficits, or heavy dependency on a single funding source\n\n"
+            "**Grant Dependency** — the share of revenue coming from grants and donations. "
+            "Organizations above 80% are heavily reliant on donor goodwill and vulnerable if a major grant is lost."
+        )
+
+    # Pre-processed base (cached — runs once per session)
+    base_df = _prepare_brand_map_df(df)
+
+    # ---------- Filters ----------
+    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+    with col_f1:
+        sectors = ["All Sectors"] + sorted(base_df["Sector"].dropna().unique().tolist())
+        sel_sector = st.selectbox("Sector", sectors, key="bm_sector")
+    with col_f2:
+        states_list = ["All States"] + sorted(base_df["State"].dropna().unique().tolist())
+        sel_state = st.selectbox("State", states_list, key="bm_state")
+    with col_f3:
+        _size_order = ["500K-1M", "1M-5M", "5M-10M", "10M-50M", "50M+"]
+        sizes = ["All Sizes"] + [s for s in _size_order if s in base_df["SizeCategory"].values]
+        sel_size = st.selectbox("Size", sizes, key="bm_size")
+    with col_f4:
+        years = sorted(base_df["TaxYear"].dropna().unique().astype(int).tolist(), reverse=True)
+        sel_year = st.selectbox("Tax Year", years, key="bm_year")
+    with col_f5:
+        _tier_labels = {
+            "All Tiers":  "All Tiers",
+            "🟢  Stable":  "Stable",
+            "🟡  Watch":   "Watch",
+            "🔴  At Risk": "At Risk",
+        }
+        sel_tier_label = st.selectbox("Resilience Tier", list(_tier_labels.keys()), key="bm_tier")
+        sel_tier = _tier_labels[sel_tier_label]
+
+    # ---------- Cheap boolean filter on pre-processed df ----------
+    mask = pd.Series(True, index=base_df.index)
+    if sel_sector != "All Sectors":
+        mask &= base_df["Sector"] == sel_sector
+    if sel_state != "All States":
+        mask &= base_df["State"] == sel_state
+    if sel_size != "All Sizes":
+        mask &= base_df["SizeCategory"] == sel_size
+    mask &= base_df["TaxYear"] == int(sel_year)
+    if sel_tier != "All Tiers":
+        mask &= base_df["ResilienceTier"] == sel_tier
+    plot_df = base_df[mask]
+
+    if plot_df.empty:
+        st.warning("No organizations match the current filters.")
+        return
+
+    # Sample for performance
+    sample = plot_df.sample(min(len(plot_df), 8000), random_state=42)
+
+    # Sector average reference point (computed on full filtered set for accuracy)
+    avg_x = plot_df["ProgramExpenseRatio"].median()
+    avg_y = plot_df["_ReservesCapped"].median()
+
+    # Dot size: wider range so small vs large orgs are visually distinct
+    log_rev = np.log1p(sample["TotalRevenueCY"].clip(lower=0))
+    log_min, log_max = log_rev.min(), log_rev.max()
+    span = log_max - log_min if log_max > log_min else 1
+    dot_sizes = ((log_rev - log_min) / span * 28 + 4)  # range 4–32
+
+    # ---------- Build figure ----------
+    fig = go.Figure()
+
+    for tier in _TIER_ORDER:
+        mask_t = sample["ResilienceTier"] == tier
+        subset = sample[mask_t]
+        if subset.empty:
+            continue
+        customdata = np.stack([
+            subset["OrgName"].fillna("Unknown"),
+            subset["State"].fillna(""),
+            subset["_RevFmt"],
+            subset["Sector"].fillna(""),
+            subset["_SurplusFmt"],
+            subset["_GrantDepFmt"],
+            subset["ResilienceTier"],
+        ], axis=-1)
+        fig.add_trace(go.Scatter(
+            x=subset["ProgramExpenseRatio"],
+            y=subset["_ReservesCapped"],
+            mode="markers",
+            name=tier,
+            marker=dict(
+                color=_TIER_COLORS[tier],
+                size=dot_sizes[mask_t],
+                opacity=0.7,
+                line=dict(width=1.5, color="#333333"),
+            ),
+            customdata=customdata,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "State: %{customdata[1]}<br>"
+                "Total Revenue: %{customdata[2]}<br>"
+                "NTEE Sector: %{customdata[3]}<br>"
+                "Surplus Margin: %{customdata[4]}<br>"
+                "Grant Dependency: %{customdata[5]}<br>"
+                "Resilience Tier: %{customdata[6]}"
+                "<extra></extra>"
+            ),
+        ))
+
+    # --- Sector average crosshairs (no diamond marker) ---
+    fig.add_shape(type="line", xref="x", yref="paper", x0=avg_x, x1=avg_x, y0=0, y1=1,
+                  line=dict(color="#6366f1", width=2.5, dash="dash"))
+    fig.add_shape(type="line", xref="paper", yref="y", x0=0, x1=1, y0=avg_y, y1=avg_y,
+                  line=dict(color="#6366f1", width=2.5, dash="dash"))
+    # --- Quadrant labels ---
+    _dark_mode = st.get_option("theme.base") == "dark"
+    _ql_text_color = "#f0f0f0" if _dark_mode else "#111111"
+    _ql_bg_color   = "rgba(30,30,40,0.90)" if _dark_mode else "rgba(255,255,255,0.92)"
+    _ql_style = dict(showarrow=False, font=dict(size=11, color=_ql_text_color, weight="bold"),
+                     bgcolor=_ql_bg_color, borderpad=5, xref="paper", yref="paper")
+    fig.add_annotation(x=0.02, y=0.98, xanchor="left",  yanchor="top",
+                       text="<b>Low efficiency</b><br>Well-resourced", **_ql_style)
+    fig.add_annotation(x=0.98, y=0.98, xanchor="right", yanchor="top",
+                       text="<b>High efficiency</b><br>Well-resourced", **_ql_style)
+    fig.add_annotation(x=0.02, y=0.02, xanchor="left",  yanchor="bottom",
+                       text="<b>Low efficiency</b><br>Fragile", **_ql_style)
+    fig.add_annotation(x=0.98, y=0.02, xanchor="right", yanchor="bottom",
+                       text="<b>High efficiency</b><br>Fragile", **_ql_style)
+
+    fig.update_layout(
+        xaxis_title=dict(text="Program Expense Ratio  (how much of every dollar goes to mission)", font=dict(color="#111111", size=13)),
+        yaxis_title=dict(text="Operating Reserve Months  (months of runway without new funding)", font=dict(color="#111111", size=13)),
+        legend_title_text="Resilience Tier",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            font=dict(color="#111111", size=13),
+            title=dict(text="Resilience Tier", font=dict(color="#111111", size=13)),
+            bgcolor="#ffffff",
+            bordercolor="#333333",
+            borderwidth=1,
+        ),
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+        font=dict(color="#111111"),
+        xaxis=dict(
+            gridcolor="#cccccc",
+            gridwidth=1,
+            zerolinecolor="#555555",
+            zerolinewidth=2,
+            linecolor="#333333",
+            linewidth=2,
+            tickformat=".0%",
+            tickfont=dict(color="#333333"),
+        ),
+        yaxis=dict(
+            gridcolor="#cccccc",
+            gridwidth=1,
+            zerolinecolor="#555555",
+            zerolinewidth=2,
+            linecolor="#333333",
+            linewidth=2,
+            tickfont=dict(color="#333333"),
+        ),
+        hoverlabel=dict(bgcolor="#f9f9f9", font_color="#222222", bordercolor="#444444"),
+        hovermode="closest",
+        margin=dict(t=60, b=60),
+        height=580,
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+    st.markdown(f'<p style="color:#6366f1; font-size:0.85rem;">Median: {avg_x:.0%} program efficiency · {avg_y:.1f} months of reserves</p>', unsafe_allow_html=True)
+
+    # ---------- Quadrant insights ----------
+    if len(plot_df) > 50:
+        med_x = plot_df["ProgramExpenseRatio"].median()
+
+        # Top-right: high efficiency, well-resourced (Danger Zone — efficient but fragile)
+        danger_zone = plot_df[
+            (plot_df["ProgramExpenseRatio"] >= med_x)
+            & (plot_df["_ReservesCapped"] < 3)
+        ]
+        if len(danger_zone) > 0:
+            st.markdown(
+                f'<div class="insight-box-warn">'
+                f"<strong>Danger Zone (top-right):</strong> <strong>{len(danger_zone):,}</strong> orgs "
+                f"are highly mission-focused but have <strong>under 3 months of reserves</strong> "
+                f"— efficient but one funding cut away from crisis."
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        # Top-left: low efficiency, well-resourced — underperforming despite resources
+        low_eff_resourced = plot_df[
+            (plot_df["ProgramExpenseRatio"] < med_x)
+            & (plot_df["_ReservesCapped"] >= avg_y)
+        ]
+        if len(low_eff_resourced) > 0:
+            st.markdown(
+                f'<div class="insight-box">'
+                f"<strong>Underutilized Resources (top-left):</strong> <strong>{len(low_eff_resourced):,}</strong> orgs "
+                f"have strong reserves but spend <strong>below the median</strong> on programs — well-funded but not fully directing dollars to mission."
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        # Bottom cluster: negative or near-zero reserves — most distressed
+        critical = plot_df[plot_df["OperatingReserveMonths"] < 0]
+        if len(critical) > 0:
+            st.markdown(
+                f'<div class="insight-box-warn">'
+                f"<strong>Critical (below Y=0):</strong> <strong>{len(critical):,}</strong> orgs show "
+                f"<strong>negative reserve months</strong> — they are already spending down net assets and face imminent insolvency without intervention."
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ---------- Tier summary ----------
+    st.markdown('<div class="section-header">Tier Breakdown (Filtered View)</div>', unsafe_allow_html=True)
+
+    tier_counts = plot_df["ResilienceTier"].value_counts()
+    tc1, tc2, tc3 = st.columns(3)
+    for col, tier in zip([tc1, tc2, tc3], _TIER_ORDER):
+        count = tier_counts.get(tier, 0)
+        pct = count / len(plot_df) if len(plot_df) > 0 else 0
+        color = _TIER_COLORS[tier]
+        col.markdown(
+            f"""<div style="background:{color}22; border:2px solid {color}; border-radius:12px; padding:18px 20px;">
+                <div style="color:#000000; font-size:0.85rem; font-weight:500; margin-bottom:4px;">{tier}</div>
+                <div style="color:#000000; font-size:1.9rem; font-weight:700; line-height:1.1;">{count:,}</div>
+                <div style="color:#000000; font-size:0.82rem; margin-top:4px;">{pct:.1%} of filtered orgs</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    # ---------- Data table ----------
+    with st.expander("Browse organizations in this view"):
+        table_cols = ["OrgName", "State", "Sector", "SizeCategory", "TotalRevenueCY",
+                      "ProgramExpenseRatio", "OperatingReserveMonths", "SurplusMargin",
+                      "GrantDependencyPct", "ResilienceTier"]
+        rename_map = {
+            "OrgName": "Organization", "SizeCategory": "Size",
+            "TotalRevenueCY": "Annual Revenue",
+            "ProgramExpenseRatio": "Program Spending %",
+            "OperatingReserveMonths": "Reserve Months",
+            "SurplusMargin": "Surplus Margin",
+            "GrantDependencyPct": "Grant Dependency %",
+            "ResilienceTier": "Tier",
+        }
+        display = (
+            plot_df[[c for c in table_cols if c in plot_df.columns]]
+            .rename(columns=rename_map)
+            .sort_values("Reserve Months")
+            .head(400)
+        )
+        st.dataframe(
+            display.style.format({
+                "Annual Revenue": "${:,.0f}",
+                "Program Spending %": "{:.1%}",
+                "Reserve Months": "{:.1f}",
+                "Surplus Margin": "{:.1%}",
+                "Grant Dependency %": "{:.1%}",
+            }),
+            use_container_width=True,
+            height=380,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main navigation
 # ---------------------------------------------------------------------------
 def main() -> None:
@@ -1076,6 +1405,7 @@ def main() -> None:
             "Resilience Explorer",
             "Stress Test Simulator",
             "Hidden Gems Finder",
+            "Brand Map",
         ],
         label_visibility="collapsed",
     )
@@ -1099,8 +1429,10 @@ def main() -> None:
         resilience_page(df, metrics)
     elif page == "Stress Test Simulator":
         simulation_page(df)
-    else:
+    elif page == "Hidden Gems Finder":
         gems_page()
+    else:
+        brand_map_page(df)
 
 
 if __name__ == "__main__":
