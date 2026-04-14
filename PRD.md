@@ -34,7 +34,7 @@ The solution consists of four analytical modules (Peer Benchmarking, Resilience 
 
 **Target User:** Fairlight Advisors and similar nonprofit capacity-building consultancies who advise funders on where to allocate philanthropic capital.
 
-**Current Starting Point:** Eight pre-parsed CSV files totaling ~362,000 rows (before deduplication) are already in `data/data_csv/`. Each file already includes an `NTEE_CD` column (sector classification codes) — no additional joining or XML parsing is needed. Additional 2024-era extract files may be added later and will be automatically picked up by the pipeline.
+**Current Starting Point:** Nine pre-parsed CSV files totaling ~420,000 rows (before deduplication) are already in `data/data_csv/`. Each file already includes an `NTEE_CD` column (sector classification codes) — no additional joining or XML parsing is needed. Additional extract files may be added later and will be automatically picked up by the pipeline.
 
 ---
 
@@ -97,9 +97,10 @@ The U.S. nonprofit sector has hundreds of thousands of public charities. Despite
 | `2022_2_990.csv` | 14,401 | 2019 (131), 2020 (8,548), 2021 (5,722) | |
 | `2023_1_990.csv` | 104,159 | 2020 (1,189), 2021 (46,795), 2022 (56,175) | |
 | `2023_2_990.csv` | 3,787 | 2020 (21), 2021 (81), 2022 (3,685) | Small supplemental |
+| `2024_990.csv` | 58,042 | 2019 (12), 2020 (373), 2021 (2,057), 2022 (28,933), 2023 (26,667) | Newly added release batch |
 | `2025_990.csv` | 103,456 | 2021 (9), 2022 (1,124), 2023 (37,754), 2024 (64,569) | Most recent; contains 2024 data |
-| **Total (pre-dedup)** | **362,184** | | |
-| **Total (post-dedup)** | **344,265** | **2016–2024** | After keeping latest filing per EIN+TaxYear |
+| **Total (pre-dedup)** | **420,226** | | |
+| **Total (post-dedup)** | **400,424** | **2016–2024** | After keeping latest filing per EIN+TaxYear |
 
 **Future additions:** Additional 2024 extract files may be added to `data/data_csv/` following the same naming convention. The pipeline's glob pattern (`data/data_csv/*_990.csv` or `data/data_csv/*990*.csv`) will automatically pick them up. No code changes should be needed.
 
@@ -110,17 +111,17 @@ The hackathon calls for "seven years of Form 990 data." After concatenation and 
 | TaxYear | Rows (post-dedup) |
 |---------|-------------------|
 | 2018 | 5,343 |
-| 2019 | 30,192 |
-| 2020 | 76,698 |
-| 2021 | 67,097 |
-| 2022 | 60,418 |
-| 2023 | 37,409 |
+| 2019 | 30,203 |
+| 2020 | 77,050 |
+| 2021 | 68,785 |
+| 2022 | 88,275 |
+| 2023 | 63,660 |
 | 2024 | 64,214 |
-| **Total** | **~341,371** |
+| **Total** | **~397,530** |
 
 TaxYears 2016 (22 rows) and 2017 (2,872 rows) are excluded from the analysis panel due to very low coverage but are retained in the raw load for completeness.
 
-**Note on volume imbalance:** TaxYear 2018 has far fewer filings (~5K) than other years (~30–77K). This is because the 2018 tax-year filings were captured by fewer IRS release batches in our dataset. Keep this in mind during temporal analyses — 2018 is useful for trend context but should not be weighted equally.
+**Note on volume imbalance:** TaxYear 2018 has far fewer filings (~5K) than other years (~30–88K). This is because the 2018 tax-year filings were captured by fewer IRS release batches in our dataset. Keep this in mind during temporal analyses — 2018 is useful for trend context but should not be weighted equally.
 
 ### 3.3 Data Structure
 
@@ -157,16 +158,17 @@ Every CSV already includes an `NTEE_CD` column (sector classification codes pre-
 | `2022_2_990.csv` | 9,963 / 14,401 (69.2%) |
 | `2023_1_990.csv` | 73,108 / 104,159 (70.2%) |
 | `2023_2_990.csv` | 2,650 / 3,787 (70.0%) |
+| `2024_990.csv` | 40,551 / 58,042 (69.9%) |
 | `2025_990.csv` | 74,957 / 103,456 (72.5%) |
-| **Combined** | **255,423 / 362,184 (70.5%)** |
+| **Combined** | **295,974 / 420,226 (70.4%)** |
 
 For the ~30% of records without an NTEE code, we use Mission-text keyword classification as a fallback (see Module 2, Section 6.2).
 
 ### 3.6 Entity Coverage Summary
 
-- **135,062 unique EINs** across the full dataset
+- **137,938 unique EINs** across the full dataset
 - **59 states/territories** represented
-- **Top 5 states:** CA (38,726), NY (29,356), TX (19,201), PA (16,767), FL (16,072)
+- **Top 5 states:** CA (44,302), NY (33,514), TX (22,454), PA (19,423), FL (19,195)
 - **EIN multi-year appearances:**
   - 1 year only: 32,888 EINs (24%)
   - 2 years: 30,715 EINs (23%)
@@ -216,8 +218,8 @@ Load all CSV files from `data/data_csv/`, clean them, merge into a single master
 
 ### 5.2 Inputs & Outputs
 
-- **Input:** All `*990*.csv` files in `data/data_csv/` (currently 8 files, ~362K rows)
-- **Output:** `data/master_990.csv` — a single deduplicated, cleaned, feature-enriched CSV (~341K rows, ~55+ columns)
+- **Input:** All `*990*.csv` files in `data/data_csv/` (currently 9 files, ~420K rows)
+- **Output:** `data/master_990.csv` — a single deduplicated, cleaned, feature-enriched CSV (~398K rows, ~55+ columns)
 
 ### 5.3 Step-by-Step Implementation
 
@@ -546,7 +548,7 @@ print("All validation checks passed.")
 
 ### 5.5 Output
 
-A single `data/master_990.csv` file with ~340,000 rows and ~55+ columns (37 original + ~18 engineered features) that serves as input to all downstream modules.
+A single `data/master_990.csv` file with ~398,000 rows and ~55+ columns (37 original + ~18 engineered features) that serves as input to all downstream modules.
 
 ---
 
@@ -1399,9 +1401,9 @@ print(f"Temporal split — Train: {len(train_df)} rows (2018–2021), Test: {len
 
 | Step | Task | Output |
 |------|------|--------|
-| 1.1 | Load and concatenate all `*990*.csv` files | Combined DataFrame (~362K rows) |
-| 1.2 | Deduplicate EIN+TaxYear combinations | Deduplicated DataFrame (~344K rows) |
-| 1.3 | Filter to TaxYear 2018–2024 panel | Analysis DataFrame (~341K rows) |
+| 1.1 | Load and concatenate all `*990*.csv` files | Combined DataFrame (~420K rows) |
+| 1.2 | Deduplicate EIN+TaxYear combinations | Deduplicated DataFrame (~400K rows) |
+| 1.3 | Filter to TaxYear 2018–2024 panel | Analysis DataFrame (~398K rows) |
 | 1.4 | Handle missing values, data types, sentinels | Cleaned DataFrame |
 | 1.5 | Compute all derived features (Section 5.3, Steps 5a–5g) | Feature-enriched DataFrame |
 | 1.6 | Run validation checklist (Section 5.4) | All checks pass |
@@ -1566,8 +1568,9 @@ aggie_hacks_2026/
 │   │   ├── 2022_2_990.csv          # (TaxYears 2019–2021)
 │   │   ├── 2023_1_990.csv          # (TaxYears 2020–2022)
 │   │   ├── 2023_2_990.csv          # (TaxYears 2020–2022)
+│   │   ├── 2024_990.csv            # (TaxYears 2019–2023)
 │   │   ├── 2025_990.csv            # (TaxYears 2021–2024)
-│   │   └── <future 2024 batches>   # Drop here; pipeline auto-detects
+│   │   └── <future batches>        # Drop here; pipeline auto-detects
 │   ├── master_990.csv              # Output of Module 1
 │   ├── peer_group_stats.csv        # Output of Module 2
 │   ├── simulation_results.csv      # Output of Module 4
