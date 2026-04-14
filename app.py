@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from src.risk_simulation import estimate_recovery, simulate_shock
 
 # ---------------------------------------------------------------------------
 # Page config & global styling
@@ -404,8 +405,15 @@ def peer_page(df: pd.DataFrame) -> None:
         for v, m, mn in zip(vals, meds, metric_names):
             ref = max(abs(m), 0.001)
             if mn in LOWER_IS_BETTER:
-                # Invert: org value below median → spoke extends beyond 1.0 (better)
-                normed = max(0.0, 2.0 - v / ref)
+                if abs(m) < 0.001 and abs(v) < 0.001:
+                    # Both org and median are effectively zero — genuinely equal
+                    normed = 1.0
+                elif abs(m) < 0.001:
+                    # Peer median is ~0 but org has non-zero cost → worse than peers
+                    normed = 0.0
+                else:
+                    # Normal case: invert so lower cost → larger spoke (better)
+                    normed = max(0.0, 2.0 - v / ref)
             else:
                 normed = v / ref
             normed_vals.append(normed)
@@ -640,29 +648,154 @@ def resilience_page(df: pd.DataFrame, metrics: dict) -> None:
 # ---------------------------------------------------------------------------
 # PAGE 4 — Stress Test Simulator
 # ---------------------------------------------------------------------------
-def simulation_page(sims: pd.DataFrame) -> None:
+def simulation_page(master: pd.DataFrame) -> None:
     st.title("Stress Test Simulator")
     st.markdown(
         "See how nonprofits would fare under **real-world funding disruptions** — "
-        "from government grant cuts to economic recessions."
+        "from government grant cuts to economic recessions. Adjust the sliders to customize each scenario."
     )
 
-    scenario_descriptions = {
-        "Grant Shock (-30%)": "What if donations and grants dropped by 30%? This simulates a major donor withdrawal or economic downturn that reduces charitable giving.",
-        "Gov Grant Shock (-50%)": "What if government funding was cut in half? This models policy changes or budget sequestration affecting government-dependent nonprofits.",
-        "Program Rev Shock (-25%)": "What if earned revenue from programs fell by 25%? This simulates reduced demand or pandemic-like service disruptions.",
-        "Investment Shock (-40%)": "What if investment returns dropped 40%? This models a stock market crash affecting endowment-dependent organizations.",
-        "Combined Recession (-20%)": "What if all revenue sources dropped 20% simultaneously? This models a broad economic recession.",
+    SCENARIO_OPTIONS: dict[str, dict] = {
+        "Grant Shock": {
+            "description": (
+                "What if private donations and grants dried up? Simulates a major donor withdrawal or economic downturn. "
+                "<br><strong>Affected stream:</strong> Private contributions & grants only. "
+                "Organizations that don't rely on donations are unaffected."
+            ),
+            "streams": {
+                "ContributionsGrantsCY": ("Donations & grants drop", 30),
+            },
+        },
+        "Gov Grant Shock": {
+            "description": (
+                "What if government funding was cut? Models policy changes or budget sequestration. "
+                "<br><strong>Affected stream:</strong> Government grants only — organizations without government funding are entirely unaffected, "
+                "which is why a large government cut can show fewer at-risk nonprofits than a smaller across-the-board recession."
+            ),
+            "streams": {
+                "GovernmentGrantsAmt": ("Government grants drop", 50),
+            },
+        },
+        "Program Revenue Shock": {
+            "description": (
+                "What if earned revenue from programs fell? Simulates reduced demand or pandemic-like service disruptions. "
+                "<br><strong>Affected stream:</strong> Program service revenue only. Fee-for-service and tuition-dependent nonprofits bear the full impact."
+            ),
+            "streams": {
+                "ProgramServiceRevCY": ("Program service revenue drop", 25),
+            },
+        },
+        "Investment Shock": {
+            "description": (
+                "What if investment returns dropped? Models a stock market crash affecting endowment-dependent organizations. "
+                "<br><strong>Affected stream:</strong> Investment income only. Most small nonprofits have negligible endowments, so impact is concentrated among larger organizations."
+            ),
+            "streams": {
+                "InvestmentIncomeCY": ("Investment income drop", 40),
+            },
+        },
+        "Combined Recession": {
+            "description": (
+                "What if all revenue sources dropped simultaneously? Models a broad economic recession. "
+                "<br><strong>Affected streams:</strong> All four revenue streams drop together — "
+                "which is why this typically affects more nonprofits than a larger shock to a single stream."
+            ),
+            "streams": {
+                "ContributionsGrantsCY": ("Donations & grants drop", 20),
+                "GovernmentGrantsAmt": ("Government grants drop", 20),
+                "ProgramServiceRevCY": ("Program revenue drop", 20),
+                "InvestmentIncomeCY": ("Investment income drop", 20),
+            },
+        },
     }
 
-    scenarios = sorted(sims["Scenario"].unique())
-    scenario = st.selectbox("Choose a scenario to explore", scenarios)
+    scenario = st.selectbox("Choose a scenario to explore", list(SCENARIO_OPTIONS.keys()))
+    config = SCENARIO_OPTIONS[scenario]
 
-    desc = scenario_descriptions.get(scenario, "")
-    if desc:
-        st.markdown(f'<div class="insight-box">{desc}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="insight-box">{config["description"]}</div>', unsafe_allow_html=True)
 
-    sdf = sims[sims["Scenario"] == scenario]
+    # Sliders — one per affected revenue stream
+    st.markdown('<div class="section-header">Customize Shock Intensity</div>', unsafe_allow_html=True)
+    streams = config["streams"]
+
+    # Sync checkbox — only shown when there are multiple streams (Combined Recession)
+    sync = False
+    if len(streams) > 1:
+        sync = st.checkbox(
+            "Sync all sliders — drag one to update all streams equally",
+            value=True,
+            key=f"sync_{scenario}",
+        )
+
+    adjustments: dict[str, float] = {}
+
+    if sync and len(streams) > 1:
+        sync_val_key = f"sync_val_{scenario}"
+        slider_keys = {col: f"shock_{scenario}_{col}" for col in streams}
+
+        # Initialize sync value from existing slider state or defaults
+        if sync_val_key not in st.session_state:
+            first_col = next(iter(streams))
+            st.session_state[sync_val_key] = st.session_state.get(
+                slider_keys[first_col], next(iter(streams.values()))[1]
+            )
+
+        # Detect if any slider was moved (differs from last synced value) and update sync_val
+        for col_name, key in slider_keys.items():
+            if key in st.session_state and st.session_state[key] != st.session_state[sync_val_key]:
+                st.session_state[sync_val_key] = st.session_state[key]
+                break
+
+        # Force all slider session state values to the synced value before rendering
+        for key in slider_keys.values():
+            st.session_state[key] = st.session_state[sync_val_key]
+
+        slider_cols = st.columns(len(streams))
+        for i, (col_name, (label, _default)) in enumerate(streams.items()):
+            drop_pct = slider_cols[i].slider(
+                label,
+                min_value=0,
+                max_value=100,
+                step=5,
+                format="%d%%",
+                key=slider_keys[col_name],
+            )
+            adjustments[col_name] = 1.0 - drop_pct / 100.0
+    else:
+        slider_cols = st.columns(len(streams))
+        for i, (col_name, (label, default)) in enumerate(streams.items()):
+            drop_pct = slider_cols[i].slider(
+                label,
+                min_value=0,
+                max_value=100,
+                value=default,
+                step=5,
+                format="%d%%",
+                key=f"shock_{scenario}_{col_name}",
+            )
+            adjustments[col_name] = 1.0 - drop_pct / 100.0
+
+    # Run simulation live on master data
+    required_cols = [
+        "EIN", "OrgName", "Sector", "State", "SizeCategory",
+        "ContributionsGrantsCY", "GovernmentGrantsAmt", "ProgramServiceRevCY",
+        "InvestmentIncomeCY", "TotalRevenueCY", "TotalExpensesCY", "NetAssetsEOY",
+    ]
+    sim_input = master[[c for c in required_cols if c in master.columns]].copy()
+    sdf = simulate_shock(sim_input, scenario, adjustments)
+    sdf["RecoveryYears"] = sdf.apply(estimate_recovery, axis=1)
+
+    # Compute revenue impact stats
+    valid = sdf[sdf["TotalRevenueCY"] > 0]
+    if len(valid) > 0:
+        revenue_lost_pct = (
+            (valid["TotalRevenueCY"] - valid["PostShock_TotalRevenue"]) / valid["TotalRevenueCY"]
+        )
+        avg_revenue_lost = revenue_lost_pct.mean()
+        pct_with_any_loss = (revenue_lost_pct > 0).mean()
+    else:
+        avg_revenue_lost = 0.0
+        pct_with_any_loss = 0.0
 
     # Impact summary
     st.markdown('<div class="section-header">Overall Impact</div>', unsafe_allow_html=True)
@@ -692,7 +825,9 @@ def simulation_page(sims: pd.DataFrame) -> None:
         f"<strong>Impact:</strong> Under this scenario, <strong>{combined_danger:.1%}</strong> of nonprofits "
         f"would face serious financial distress (critical or at risk). That's roughly "
         f"<strong>{int(round(combined_danger * total)):,}</strong> organizations that could struggle to "
-        f"maintain services."
+        f"maintain services. "
+        f"On average, nonprofits would lose <strong>{avg_revenue_lost:.1%} of their total revenue</strong> "
+        f"({pct_with_any_loss:.0%} of organizations are directly exposed to this shock)."
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -963,7 +1098,7 @@ def main() -> None:
     elif page == "Resilience Explorer":
         resilience_page(df, metrics)
     elif page == "Stress Test Simulator":
-        simulation_page(sims)
+        simulation_page(df)
     else:
         gems_page()
 
