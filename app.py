@@ -1014,93 +1014,220 @@ def simulation_page(master: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 # PAGE 5 — Hidden Gems Finder
 # ---------------------------------------------------------------------------
+TIER_ORDER = [
+    "Top 25 Priority",
+    "Priority Shortlist",
+    "Extended Shortlist",
+    "Broader Universe",
+    "Already Stable",
+]
+
+TIER_COLORS = {
+    "Top 25 Priority": "#dc2626",
+    "Priority Shortlist": "#f59e0b",
+    "Extended Shortlist": "#3b82f6",
+    "Broader Universe": "#94a3b8",
+    "Already Stable": "#22c55e",
+}
+
+
+def _fmt_roi(val: float) -> str:
+    if pd.isna(val):
+        return "N/A"
+    return f"${val:,.2f}" if val < 100 else f"${val:,.0f}"
+
+
 def gems_page() -> None:
-    st.title("Hidden Gems Finder")
+    st.title("Priority Investment Shortlist")
     st.markdown(
-        "Discover **small but mighty nonprofits** — organizations that deliver outsized community impact "
-        "relative to their budget. These are the best candidates for targeted philanthropic investment."
+        "A ranked, **cost-efficiency-driven** shortlist of small-but-mighty nonprofits where "
+        "a targeted donation would produce the highest mission ROI. Each organization is scored "
+        "on how much program activity is **protected per dollar donated**, then grouped into "
+        "prioritization tiers for funders like Fairlight."
     )
 
     gems = pd.read_csv("data/hidden_gems.csv", low_memory=False)
 
-    # Top-line stats
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Hidden Gems Identified", f"{len(gems):,}")
-    needs_stabilization = gems[gems["DonationToStabilize"] > 0]["DonationToStabilize"]
-    median_donation = needs_stabilization.median() if len(needs_stabilization) > 0 else 0
-    c2.metric("Median Donation to Stabilize\n(orgs that need it)", _fmt_dollars(median_donation))
-    c3.metric("Avg. Impact Efficiency Score", f"{gems['ImpactEfficiencyScore'].mean():.0f}/100")
+    # Back-compat: older CSVs may not have the new columns. If so, fall back gracefully.
+    has_tiers = "PriorityTier" in gems.columns and "CostEfficiencyScore" in gems.columns
+    if not has_tiers:
+        st.warning(
+            "The hidden-gems dataset needs to be regenerated. Run `python run_all.py` to compute "
+            "the new Cost-Efficiency Score, ROI, and Priority Tier columns."
+        )
+        return
 
+    needs_funding = gems[gems["DonationToStabilize"] > 0].copy()
+
+    # ------------------------------------------------------------------
+    # TIER SELECTOR — primary control
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-header">Choose a Prioritization Tier</div>', unsafe_allow_html=True)
+
+    tier_options = [
+        ("Top 25 Priority", "Top 25 — Immediate funding focus"),
+        ("Priority Shortlist", "Top 100 — Priority shortlist"),
+        ("Extended Shortlist", "Top 500 — Extended shortlist"),
+        ("Broader Universe", "Full universe (all gems)"),
+    ]
+    tier_counts_map = {
+        "Top 25 Priority": (gems["PriorityTier"] == "Top 25 Priority").sum(),
+        "Priority Shortlist": gems["PriorityTier"].isin(["Top 25 Priority", "Priority Shortlist"]).sum(),
+        "Extended Shortlist": gems["PriorityTier"].isin(
+            ["Top 25 Priority", "Priority Shortlist", "Extended Shortlist"]
+        ).sum(),
+        "Broader Universe": len(needs_funding),
+    }
+    tier_labels = [f"{lbl}  ·  {tier_counts_map[key]:,} orgs" for key, lbl in tier_options]
+    idx = st.radio(
+        "Tier",
+        options=list(range(len(tier_options))),
+        format_func=lambda i: tier_labels[i],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="gems_tier_idx",
+    )
+    active_tier_key, _ = tier_options[idx]
+
+    # Build active subset based on cumulative tier definition
+    if active_tier_key == "Top 25 Priority":
+        active = gems[gems["PriorityTier"] == "Top 25 Priority"].copy()
+    elif active_tier_key == "Priority Shortlist":
+        active = gems[gems["PriorityTier"].isin(["Top 25 Priority", "Priority Shortlist"])].copy()
+    elif active_tier_key == "Extended Shortlist":
+        active = gems[
+            gems["PriorityTier"].isin(["Top 25 Priority", "Priority Shortlist", "Extended Shortlist"])
+        ].copy()
+    else:
+        active = needs_funding.copy()
+
+    active = active.sort_values("PriorityRank").reset_index(drop=True)
+
+    # ------------------------------------------------------------------
+    # TOP-LINE KPIs — ROI-focused
+    # ------------------------------------------------------------------
+    total_donation = active["DonationToStabilize"].sum()
+    total_impact = active["AnnualProgramImpact"].sum()
+    median_roi = active["ProgramImpactPerDollar"].median()
+    portfolio_roi = total_impact / total_donation if total_donation > 0 else np.nan
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Organizations in Tier", f"{len(active):,}")
+    k2.metric(
+        "Total Funding to Stabilize",
+        _fmt_dollars(total_donation),
+        help="Sum of DonationToStabilize across every org in this tier — the check a funder would write to bring all of them to 6-month reserves.",
+    )
+    k3.metric(
+        "Annual Mission Impact Protected",
+        _fmt_dollars(total_impact),
+        help="Combined yearly program spending of every org in the tier — the mission activity that would be preserved if all were stabilized.",
+    )
+    if pd.notna(portfolio_roi):
+        k4.metric(
+            "Portfolio ROI",
+            f"${portfolio_roi:,.1f} / $1",
+            help="For every $1 a funder donates across this tier, $X of annual mission work is protected. Portfolio-level cost efficiency.",
+        )
+    else:
+        k4.metric("Portfolio ROI", "N/A")
+
+    roi_text = f"${median_roi:,.1f}" if pd.notna(median_roi) else "N/A"
     st.markdown(
         f'<div class="insight-box-good">'
-        f"<strong>What is a Hidden Gem?</strong> These are nonprofits that score in the "
-        f"<strong>top 20%</strong> for impact efficiency but have <strong>below-median budgets</strong>. "
-        f"They're growing, financially sustainable, and poised to do more with targeted support."
+        f"<strong>How this shortlist is built:</strong> every candidate is ranked on "
+        f"<em>Cost-Efficiency Score</em> (0–100) — a weighted blend of <strong>mission ROI (40%)</strong>, "
+        f"overall impact quality (30%), revenue growth (15%), and funding urgency (15%). "
+        f"Median mission ROI in this tier: <strong>{roi_text} of annual program activity protected per $1 donated</strong>."
         f"</div>",
         unsafe_allow_html=True,
     )
 
-    # Filters
-    st.markdown('<div class="section-header">Find Gems That Match Your Interests</div>', unsafe_allow_html=True)
+    # ------------------------------------------------------------------
+    # FILTERS
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-header">Refine Your Shortlist</div>', unsafe_allow_html=True)
     col_f1, col_f2, col_f3 = st.columns(3)
     with col_f1:
-        state_options = ["All States"] + sorted(gems["State"].dropna().unique().tolist())
+        state_options = ["All States"] + sorted(active["State"].dropna().unique().tolist())
         sel_state = st.selectbox("State", state_options, key="gems_state")
     with col_f2:
-        sector_options = ["All Sectors"] + sorted(gems["Sector"].dropna().unique().tolist())
+        sector_options = ["All Sectors"] + sorted(active["Sector"].dropna().unique().tolist())
         sel_sector = st.selectbox("Sector", sector_options, key="gems_sector")
     with col_f3:
-        donation_max = int(gems["DonationToStabilize"].quantile(0.95))
-        min_donation, max_donation = st.slider(
-            "Donation to stabilize range",
-            min_value=0,
-            max_value=donation_max,
-            value=(0, donation_max),
-            step=10000,
-            format="$%d",
-            help="Filter to organizations whose required stabilization donation falls within this range.",
-        )
+        # Donation-to-stabilize budget filter — funders often want a per-org ceiling.
+        # IMPORTANT: default to the TRUE max so no orgs are filtered out by default.
+        # Using a percentile here silently drops the most expensive orgs — which are
+        # often the highest-ranked on mission impact.
+        if len(active) > 0 and active["DonationToStabilize"].max() > 0:
+            true_max = float(active["DonationToStabilize"].max())
+            # Round ceiling up to a clean step for UI tidiness
+            step = 5_000 if true_max < 1_000_000 else 25_000
+            donation_ceiling = int(np.ceil(true_max / step) * step)
+            donation_ceiling = max(donation_ceiling, 10_000)
+            max_budget = st.slider(
+                "Max donation per org",
+                min_value=0,
+                max_value=donation_ceiling,
+                value=donation_ceiling,
+                step=step,
+                format="$%d",
+                help="Skip orgs whose stabilization cost exceeds this ceiling. Defaults to no cap.",
+                key=f"gems_budget_cap_{active_tier_key}",
+            )
+        else:
+            max_budget = None
 
-    filtered = gems.copy()
+    filtered = active.copy()
     if sel_state != "All States":
         filtered = filtered[filtered["State"] == sel_state]
     if sel_sector != "All Sectors":
         filtered = filtered[filtered["Sector"] == sel_sector]
-    filtered = filtered[
-        (filtered["DonationToStabilize"] >= min_donation)
-        & (filtered["DonationToStabilize"] <= max_donation)
-    ]
+    if max_budget is not None:
+        filtered = filtered[filtered["DonationToStabilize"] <= max_budget]
 
     st.markdown(f"**Showing {len(filtered):,} organizations** matching your filters")
 
-    # Session state for selected org (drives breakdown panel + table highlight)
     if "gems_selected_org" not in st.session_state:
         st.session_state.gems_selected_org = None
     selected_name = st.session_state.gems_selected_org
 
-    # Top gems cards
+    # ------------------------------------------------------------------
+    # TOP 6 CARDS — ranked by CostEfficiencyScore
+    # ------------------------------------------------------------------
     if len(filtered) > 0:
-        top_gems = filtered.nlargest(6, "ImpactEfficiencyScore")
-
+        top_gems = filtered.head(6)
         cols = st.columns(3)
         for i, (_, gem) in enumerate(top_gems.iterrows()):
             with cols[i % 3]:
                 rl, rc = _resilience_label(gem["ResilienceScore"])
+                roi_val = gem.get("ProgramImpactPerDollar", np.nan)
+                roi_display = f"${roi_val:,.1f}" if pd.notna(roi_val) else "—"
                 donation_text = (
-                    "Already stable"
-                    if gem["DonationToStabilize"] == 0
-                    else f'{_fmt_dollars(gem["DonationToStabilize"])} to reach 6-month reserves'
+                    f'{_fmt_dollars(gem["DonationToStabilize"])} to reach 6-month reserves'
                 )
+                rank_val = gem.get("PriorityRank", None)
+                rank_text = f"#{int(rank_val)}" if pd.notna(rank_val) else "—"
+                ce_val = gem.get("CostEfficiencyScore", np.nan)
+                ce_display = f"{ce_val:.0f}/100" if pd.notna(ce_val) else "—"
+
                 is_card_selected = selected_name == gem["OrgName"]
                 card_border = "2px solid #3b82f6" if is_card_selected else "1px solid #e5e7eb"
                 card_bg = "#f0f7ff" if is_card_selected else "#fafbfc"
                 st.markdown(
                     f"""<div style="background:{card_bg}; border:{card_border}; border-radius:12px; padding:16px; margin-bottom:4px">
-                    <div style="font-weight:700; font-size:1rem; color:#1a2332; margin-bottom:4px">{gem['OrgName'][:50]}</div>
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4px">
+                        <div style="font-weight:700; font-size:1rem; color:#1a2332; flex:1">{gem['OrgName'][:50]}</div>
+                        <div style="font-size:0.7rem; color:#ffffff; background:#1a2332; padding:3px 8px; border-radius:10px; margin-left:8px">{rank_text}</div>
+                    </div>
                     <div style="font-size:0.8rem; color:#6b7280; margin-bottom:10px">{gem.get('City', '')} {gem['State']} · {gem['Sector']}</div>
+                    <div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:8px 10px; margin-bottom:10px">
+                        <div style="font-size:0.72rem; color:#047857; text-transform:uppercase; letter-spacing:0.04em; font-weight:600">Mission ROI</div>
+                        <div style="font-size:1.15rem; font-weight:700; color:#065f46">{roi_display} <span style="font-size:0.75rem; font-weight:500; color:#047857">of programs / $1 donated</span></div>
+                    </div>
                     <div style="display:flex; justify-content:space-between; margin-bottom:8px">
-                        <div><span style="font-size:0.75rem; color:#9ca3af">Impact Score</span><br/><strong>{gem['ImpactEfficiencyScore']:.0f}/100</strong></div>
-                        <div><span style="font-size:0.75rem; color:#9ca3af">Resilience</span><br/><strong><span class="health-badge {rc}">{rl}</span></strong></div>
+                        <div><span style="font-size:0.72rem; color:#9ca3af">Cost-Eff. Score</span><br/><strong>{ce_display}</strong></div>
+                        <div><span style="font-size:0.72rem; color:#9ca3af">Resilience</span><br/><span class="health-badge {rc}">{rl}</span></div>
                     </div>
                     <div style="font-size:0.8rem; color:#374151; margin-top:6px">💡 {donation_text}</div>
                     </div>""",
@@ -1111,28 +1238,43 @@ def gems_page() -> None:
                     st.session_state.gems_selected_org = None if is_card_selected else gem["OrgName"]
                     st.rerun()
 
-    # Score breakdown panel — shown whenever an org is selected
+    # ------------------------------------------------------------------
+    # SCORE BREAKDOWN PANEL — Cost-Efficiency Score components
+    # ------------------------------------------------------------------
     selected_name = st.session_state.get("gems_selected_org")
     if selected_name:
         sel_rows = filtered[filtered["OrgName"] == selected_name]
         if len(sel_rows) == 0:
-            # Org exists in dataset but not in current filter — widen search
             sel_rows = gems[gems["OrgName"] == selected_name]
         if len(sel_rows) > 0:
             sel = sel_rows.iloc[0]
-            prog = sel.get("ProgramExpenseRatio", np.nan)
+            prog_impact = sel.get("AnnualProgramImpact", np.nan)
+            donation = sel.get("DonationToStabilize", np.nan)
+            roi_val = sel.get("ProgramImpactPerDollar", np.nan)
             growth = sel.get("RevenueGrowthPct", np.nan)
             resilience = sel.get("ResilienceScore", np.nan)
             reserves = sel.get("OperatingReserveMonths", np.nan)
+            impact_score = sel.get("ImpactEfficiencyScore", np.nan)
+            ce_score = sel.get("CostEfficiencyScore", np.nan)
+            roi_pctile = sel.get("ROI_Percentile", np.nan)
+            rank_val = sel.get("PriorityRank", np.nan)
 
-            def _sc(val: float | None, good_thresh: float, warn_thresh: float) -> str:
+            def _sc(val, good_thresh, warn_thresh):
                 if val is None or (isinstance(val, float) and np.isnan(val)):
                     return "#9ca3af"
                 return "#22c55e" if val >= good_thresh else "#f59e0b" if val >= warn_thresh else "#ef4444"
 
-            prog_color = _sc(prog, 0.75, 0.60)
+            roi_color = _sc(roi_pctile, 0.75, 0.50)
+            impact_color = _sc(impact_score, 80, 60)
             growth_color = _sc(growth, 0.05, 0.0)
-            res_color = _sc(resilience, 70, 40)
+            urgency_color = _sc(12 - (reserves or 0), 9, 6)  # low reserves ⇒ urgent ⇒ warmer
+
+            reserve_txt = f"{reserves:.1f} mo" if pd.notna(reserves) else "N/A"
+            roi_detail = (
+                f"${prog_impact:,.0f} of annual programs / ${donation:,.0f} stabilization → ${roi_val:,.2f} per $1"
+                if pd.notna(roi_val) else "Org is already stable — no stabilization donation required."
+            )
+            roi_pctile_txt = f"top {(1 - roi_pctile):.0%} among all candidates" if pd.notna(roi_pctile) else "—"
 
             components_html = "".join([
                 f"""<div style="display:flex; align-items:flex-start; gap:14px; padding:10px 0; border-bottom:1px solid #f3f4f6">
@@ -1150,48 +1292,46 @@ def gems_page() -> None:
                 </div>"""
                 for label, weight, value, detail, benchmark, color in [
                     (
-                        "Program Spending Efficiency", 25,
-                        f"{prog:.1%}" if pd.notna(prog) else "N/A",
-                        "Share of every dollar that goes directly to programs and services",
-                        "75%+ is the industry standard — higher is better",
-                        prog_color,
+                        "Mission ROI", 40,
+                        f"${roi_val:,.2f} / $1" if pd.notna(roi_val) else "N/A",
+                        roi_detail,
+                        roi_pctile_txt,
+                        roi_color,
                     ),
                     (
-                        "Revenue Growth", 20,
+                        "Impact Efficiency Score", 30,
+                        f"{impact_score:.0f}/100" if pd.notna(impact_score) else "N/A",
+                        "The original Impact Efficiency composite (program spending, growth, leverage, reach, sustainability).",
+                        "80+ is exceptional; already filtered to top 20% of all nonprofits",
+                        impact_color,
+                    ),
+                    (
+                        "Revenue Growth Momentum", 15,
                         f"{growth:+.1%}" if pd.notna(growth) else "N/A",
-                        "Year-over-year change in total revenue",
-                        "Positive growth signals expanding capacity to serve the community",
+                        "Year-over-year revenue change — indicates whether donor dollars amplify expansion or merely sustain.",
+                        "Positive growth confirms trajectory; >5% is strong momentum",
                         growth_color,
                     ),
                     (
-                        "Program Leverage", 20,
-                        "Derived",
-                        "Program spending generated per dollar of contributions received",
-                        "Higher leverage = more mission output per donor dollar (percentile-ranked vs. peers)",
-                        "#3b82f6",
-                    ),
-                    (
-                        "Community Reach", 15,
-                        "Derived",
-                        "Total staff and volunteers relative to organization size (per $1M revenue)",
-                        "More people engaged per dollar = broader community footprint (percentile-ranked vs. peers)",
-                        "#3b82f6",
-                    ),
-                    (
-                        "Financial Sustainability", 20,
-                        f"{resilience:.0f}/100" if pd.notna(resilience) else "N/A",
-                        f"Composite resilience score — reserve runway: {reserves:.1f} months" if pd.notna(reserves) else "Composite resilience score based on reserves, margins, and debt",
-                        "70+ is healthy; below 40 indicates elevated financial risk",
-                        res_color,
+                        "Funding Urgency", 15,
+                        reserve_txt,
+                        "Inverse of operating reserve months. Orgs with shorter runway score higher — a donation matters more to them.",
+                        "<3 months reserves = high urgency; 3–6 = moderate; 6+ = low urgency",
+                        urgency_color,
                     ),
                 ]
             ])
 
+            ce_txt = f"{ce_score:.0f}/100" if pd.notna(ce_score) else "N/A"
+            rank_txt = f"#{int(rank_val)}" if pd.notna(rank_val) else "N/A"
             st.markdown(
                 f"""<div style="background:#f8f9fc; border:1px solid #dde2ec; border-radius:12px; padding:20px; margin:8px 0 20px 0">
-                  <div style="font-size:1.05rem; font-weight:700; color:#1a2332; margin-bottom:2px">Score Breakdown — {sel['OrgName']}</div>
+                  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:2px">
+                    <div style="font-size:1.05rem; font-weight:700; color:#1a2332">Cost-Efficiency Breakdown — {sel['OrgName']}</div>
+                    <div style="font-size:0.85rem; color:#1a2332">Rank {rank_txt} · Score {ce_txt}</div>
+                  </div>
                   <div style="font-size:0.82rem; color:#6b7280; margin-bottom:14px">
-                    Each factor is percentile-ranked against all organizations in the dataset, then combined using the weights below to produce the 0–100 Impact Efficiency Score.
+                    Each factor is percentile-ranked across all candidates, then combined using the weights below to produce the 0–100 Cost-Efficiency Score used for prioritization.
                   </div>
                   {components_html}
                 </div>""",
@@ -1201,87 +1341,129 @@ def gems_page() -> None:
                 st.session_state.gems_selected_org = None
                 st.rerun()
 
-    # Scatter plot
-    st.markdown('<div class="section-header">Budget vs. Impact Efficiency</div>', unsafe_allow_html=True)
+    # ------------------------------------------------------------------
+    # ROI SCATTER — Donation cost vs. program impact protected
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-header">Cost vs. Mission Impact Protected</div>', unsafe_allow_html=True)
 
     if len(filtered) > 0:
-        plot_df = filtered.head(3000)
-        plot_df = plot_df.copy()
-        plot_df["Revenue"] = plot_df["TotalRevenueCY"].apply(_fmt_dollars)
-        plot_df["Donation Needed"] = plot_df["DonationToStabilize"].apply(_fmt_dollars)
+        plot_df = filtered[filtered["DonationToStabilize"] > 0].head(3000).copy()
+        plot_df["DonationFmt"] = plot_df["DonationToStabilize"].apply(_fmt_dollars)
+        plot_df["ImpactFmt"] = plot_df["AnnualProgramImpact"].apply(_fmt_dollars)
+        plot_df["ROIFmt"] = plot_df["ProgramImpactPerDollar"].apply(lambda v: f"${v:,.2f} / $1" if pd.notna(v) else "N/A")
 
-        fig = px.scatter(
-            plot_df,
-            x="TotalRevenueCY",
-            y="ImpactEfficiencyScore",
-            color="Sector",
-            size="ResilienceScore",
-            size_max=14,
-            hover_data={
-                "OrgName": True,
-                "Revenue": True,
-                "Donation Needed": True,
-                "TotalRevenueCY": False,
-                "ResilienceScore": True,
-            },
-            labels={
-                "TotalRevenueCY": "Total Revenue",
-                "ImpactEfficiencyScore": "Impact Efficiency Score",
-            },
-            log_x=True,
-            opacity=0.65,
-        )
-        fig.update_layout(
-            legend_title_text="",
-            legend=dict(orientation="h", yanchor="top", y=-0.35, xanchor="center", x=0.5),
-            margin=dict(t=10, b=80),
-            height=500,
-        )
-        st.caption("Click any point to select an organization and see its score breakdown highlighted in the table below.")
-        chart_event = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode="points")
-        if chart_event and chart_event.selection and chart_event.selection.points:
-            pt = chart_event.selection.points[0]
-            sel_x = pt.get("x")
-            sel_y = pt.get("y")
-            if sel_x is not None and sel_y is not None:
-                match = plot_df[
-                    (plot_df["TotalRevenueCY"] == sel_x)
-                    & (abs(plot_df["ImpactEfficiencyScore"] - sel_y) < 0.01)
-                ]
-                if len(match) > 0:
-                    new_org = match.iloc[0]["OrgName"]
-                    if st.session_state.get("gems_selected_org") != new_org:
-                        st.session_state.gems_selected_org = new_org
-                        st.rerun()
+        if len(plot_df) > 0:
+            fig = px.scatter(
+                plot_df,
+                x="DonationToStabilize",
+                y="AnnualProgramImpact",
+                color="PriorityTier",
+                size="CostEfficiencyScore",
+                size_max=22,
+                category_orders={"PriorityTier": TIER_ORDER},
+                color_discrete_map=TIER_COLORS,
+                hover_data={
+                    "OrgName": True,
+                    "Sector": True,
+                    "State": True,
+                    "DonationFmt": True,
+                    "ImpactFmt": True,
+                    "ROIFmt": True,
+                    "DonationToStabilize": False,
+                    "AnnualProgramImpact": False,
+                    "CostEfficiencyScore": ":.0f",
+                    "PriorityTier": False,
+                },
+                labels={
+                    "DonationToStabilize": "Donation to Stabilize (cost)",
+                    "AnnualProgramImpact": "Annual Program Activity Protected",
+                    "PriorityTier": "Priority Tier",
+                },
+                log_x=True,
+                log_y=True,
+                opacity=0.72,
+            )
 
-    # Full table
-    st.markdown('<div class="section-header">Full List</div>', unsafe_allow_html=True)
+            # Reference lines: $1 → $1 of programs, and $1 → $10 of programs
+            if len(plot_df) > 0:
+                x_min = plot_df["DonationToStabilize"].min()
+                x_max = plot_df["DonationToStabilize"].max()
+                x_ref = np.array([max(x_min, 1), x_max])
+                for mult, label in [(1, "1× (break-even)"), (10, "10× leverage"), (100, "100× leverage")]:
+                    fig.add_trace(go.Scatter(
+                        x=x_ref,
+                        y=x_ref * mult,
+                        mode="lines",
+                        name=label,
+                        line=dict(color="#9ca3af", width=1, dash="dot"),
+                        showlegend=True,
+                        hoverinfo="skip",
+                    ))
+
+            fig.update_layout(
+                legend_title_text="",
+                legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5),
+                margin=dict(t=10, b=80),
+                height=520,
+            )
+            st.caption(
+                "Each dot is one organization. X-axis = cost to stabilize; Y-axis = annual program activity protected. "
+                "Points far above the 1× line deliver the highest mission ROI per dollar. Click any dot to pin its score breakdown."
+            )
+            chart_event = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode="points")
+            if chart_event and chart_event.selection and chart_event.selection.points:
+                pt = chart_event.selection.points[0]
+                sel_x = pt.get("x")
+                sel_y = pt.get("y")
+                if sel_x is not None and sel_y is not None:
+                    match = plot_df[
+                        (plot_df["DonationToStabilize"] == sel_x)
+                        & (abs(plot_df["AnnualProgramImpact"] - sel_y) < 0.01)
+                    ]
+                    if len(match) > 0:
+                        new_org = match.iloc[0]["OrgName"]
+                        if st.session_state.get("gems_selected_org") != new_org:
+                            st.session_state.gems_selected_org = new_org
+                            st.rerun()
+
+    # ------------------------------------------------------------------
+    # RANKED TABLE — sorted by PriorityRank
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-header">Ranked List</div>', unsafe_allow_html=True)
     table_cols = [
-        "OrgName", "State", "Sector", "TotalRevenueCY",
+        "PriorityRank", "OrgName", "State", "Sector",
+        "CostEfficiencyScore", "ProgramImpactPerDollar",
+        "DonationToStabilize", "AnnualProgramImpact",
         "ImpactEfficiencyScore", "ResilienceScore",
-        "ProgramExpenseRatio", "RevenueGrowthPct",
-        "OperatingReserveMonths", "DonationToStabilize",
+        "OperatingReserveMonths", "RevenueGrowthPct",
     ]
+    available_cols = [c for c in table_cols if c in filtered.columns]
     rename_map = {
+        "PriorityRank": "Rank",
         "OrgName": "Organization",
-        "TotalRevenueCY": "Annual Revenue",
+        "CostEfficiencyScore": "Cost-Eff. Score",
+        "ProgramImpactPerDollar": "ROI ($ programs / $1)",
+        "DonationToStabilize": "Donation to Stabilize",
+        "AnnualProgramImpact": "Annual Program Impact",
         "ImpactEfficiencyScore": "Impact Score",
         "ResilienceScore": "Resilience",
-        "ProgramExpenseRatio": "Program Spending %",
-        "RevenueGrowthPct": "Revenue Growth",
         "OperatingReserveMonths": "Reserve Months",
-        "DonationToStabilize": "Donation to Stabilize",
+        "RevenueGrowthPct": "Revenue Growth",
     }
-    display = filtered[table_cols].rename(columns=rename_map).head(300)
+    display = (
+        filtered[available_cols]
+        .rename(columns=rename_map)
+        .sort_values("Rank")
+        .head(500)
+    )
 
-    # If an org is selected, float it to the top of the table
     selected_name = st.session_state.get("gems_selected_org")
-    if selected_name:
+    if selected_name and "Organization" in display.columns:
         is_sel = display["Organization"] == selected_name
         display = pd.concat([display[is_sel], display[~is_sel]], ignore_index=True)
 
     def _highlight_selected_row(row: pd.Series) -> list[str]:
-        if selected_name and row["Organization"] == selected_name:
+        if selected_name and row.get("Organization") == selected_name:
             return ["background-color: #fef3c7; font-weight: bold"] * len(row)
         return [""] * len(row)
 
@@ -1290,18 +1472,32 @@ def gems_page() -> None:
         .apply(_highlight_selected_row, axis=1)
         .format(
             {
-                "Annual Revenue": "${:,.0f}",
+                "Cost-Eff. Score": "{:.0f}",
+                "ROI ($ programs / $1)": "${:,.2f}",
+                "Donation to Stabilize": "${:,.0f}",
+                "Annual Program Impact": "${:,.0f}",
                 "Impact Score": "{:.0f}",
                 "Resilience": "{:.0f}",
-                "Program Spending %": "{:.1%}",
-                "Revenue Growth": "{:+.1%}",
                 "Reserve Months": "{:.1f}",
-                "Donation to Stabilize": "${:,.0f}",
+                "Revenue Growth": "{:+.1%}",
             }
         ),
         use_container_width=True,
-        height=400,
+        height=420,
     )
+
+    # ------------------------------------------------------------------
+    # EXPORT — let funders take the shortlist with them
+    # ------------------------------------------------------------------
+    if len(display) > 0:
+        csv_bytes = display.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "📥 Download this shortlist (CSV)",
+            data=csv_bytes,
+            file_name=f"priority_shortlist_{active_tier_key.lower().replace(' ', '_')}.csv",
+            mime="text/csv",
+            help="Download the current filtered, ranked list for offline review.",
+        )
 
 
 # ---------------------------------------------------------------------------

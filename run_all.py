@@ -53,20 +53,32 @@ def main() -> None:
     df, hidden = find_hidden_gems(df)
     gem_cols = [
         "EIN",
+        "TaxYear",
         "OrgName",
         "State",
         "City",
         "Sector",
         "SizeCategory",
         "TotalRevenueCY",
+        "ProgramSvcExpenses",
+        "Employees",
+        "Volunteers",
         "ImpactEfficiencyScore",
         "ResilienceScore",
         "ProgramExpenseRatio",
         "RevenueGrowthPct",
         "OperatingReserveMonths",
         "DonationToStabilize",
+        "AnnualProgramImpact",
+        "ProgramImpactPerDollar",
+        "PeopleEngagedPer10K",
+        "CostEfficiencyScore",
+        "ROI_Percentile",
+        "PriorityRank",
+        "PriorityTier",
         "Mission",
     ]
+    gem_cols = [c for c in gem_cols if c in hidden.columns]
     hidden[gem_cols].to_csv("data/hidden_gems.csv", index=False)
 
     df.to_csv("data/master_990.csv", index=False)

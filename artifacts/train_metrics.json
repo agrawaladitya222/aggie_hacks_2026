@@ -1,11 +1,11 @@
 {
   "best_model": "Random Forest",
-  "cv_auc_mean": 0.9021205851402005,
-  "cv_auc_std": 0.01345691443347402,
+  "cv_auc_mean": 0.9021205848891999,
+  "cv_auc_std": 0.013456914639420616,
   "all_models": [
     {
       "Model": "Random Forest",
-      "AUC-ROC": 0.9015275396492173,
+      "AUC-ROC": 0.9015275392308786,
       "Precision (At Risk)": 0.9099463410840656,
       "Recall (At Risk)": 0.5794582280988462,
       "F1 (At Risk)": 0.7080358223405543,
