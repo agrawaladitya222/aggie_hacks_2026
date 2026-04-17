@@ -3,6 +3,19 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+# ---------------------------------------------------------------------------
+# Minimum meaningful stabilization donation.
+# Orgs whose DonationToStabilize falls below this floor are considered
+# effectively already stable — their "need" is operating float, not a
+# strategic grant. They're excluded from Cost-Efficiency ranking so we
+# don't produce inflated ROI ratios driven by tiny denominators
+# (e.g. an org that needs $2,540 to stabilize and spends $1M/yr on
+# programs shows a nominal ROI of $400+ per $1 donated, which isn't a
+# meaningful funding opportunity).
+# Tune here to change the floor across the whole pipeline.
+# ---------------------------------------------------------------------------
+MIN_MEANINGFUL_DONATION: float = 25_000.0
+
 
 def percentile_rank(series: pd.Series) -> pd.Series:
     return series.rank(pct=True)
@@ -74,7 +87,10 @@ def find_hidden_gems(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     )
 
     # --- Cost-Efficiency Score (0–100) -----------------------------------
-    # Computed only on orgs that actually need funding (DonationToStabilize > 0).
+    # Computed only on orgs whose stabilization need meets the minimum
+    # meaningful threshold (MIN_MEANINGFUL_DONATION). This excludes
+    # "token-donation" cases whose tiny denominators would otherwise
+    # produce extreme ROI ratios and distort the ranking.
     # Weights:
     #   40%  ROI (program impact per donation dollar)
     #   30%  ImpactEfficiencyScore (overall quality)
@@ -82,7 +98,7 @@ def find_hidden_gems(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     #   15%  Urgency (lower reserves = higher score — funding matters more)
     hidden["CostEfficiencyScore"] = np.nan
     hidden["ROI_Percentile"] = np.nan
-    mask_needs = hidden["DonationToStabilize"] > 0
+    mask_needs = hidden["DonationToStabilize"] >= MIN_MEANINGFUL_DONATION
     if mask_needs.any():
         sub = hidden.loc[mask_needs]
         rank_roi = percentile_rank(sub["ProgramImpactPerDollar"])

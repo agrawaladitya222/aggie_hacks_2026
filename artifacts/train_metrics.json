@@ -1,7 +1,7 @@
 {
   "best_model": "Random Forest",
-  "cv_auc_mean": 0.9021205848891999,
-  "cv_auc_std": 0.013456914639420616,
+  "cv_auc_mean": 0.9021205850565164,
+  "cv_auc_std": 0.013456914697968522,
   "all_models": [
     {
       "Model": "Random Forest",

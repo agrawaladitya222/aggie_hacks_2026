@@ -1,0 +1,12 @@
+An obvious question here might be, how are the hidden gems detected and how is Mission ROI calculated?
+Lets start with Mission ROI. We first find the Annual Spending on Programs for that org (which is taken 
+directly from the 990 form).
+We then divide this amount by the calculated donation needed to stabilize (how much money is needed to get the org to 
+6 months of operating reserves) (the monthly operated cost is calculated by dividing Total Yearly Expenses by 12).
+If this organization were to go under, we would lose all the programs that they host/contribute to. So by helping an
+org reach their 6 month reserve, you are effectively helping them ensure that their programs will continue. 
+
+
+However, as you can see, Mission ROI is not the sole factor that determines the cost efficiency score that we calculate.
+
+

@@ -583,7 +583,7 @@ def resilience_page(df: pd.DataFrame, metrics: dict) -> None:
         sel_sector = st.selectbox("Filter by sector", sectors, key="res_sector")
     with col_f2:
         sizes = ["All Sizes"] + sorted(df["SizeCategory"].dropna().unique().tolist())
-        sel_size = st.selectbox("Filter by size", sizes, key="res_size")
+        sel_size = st.selectbox("Filter by Revenue", sizes, key="res_size")
     with col_f3:
         states_list = ["All States"] + sorted(df["State"].dropna().unique().tolist())
         sel_state = st.selectbox("Filter by state", states_list, key="res_state")
