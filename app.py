@@ -150,6 +150,31 @@ STATUS_COLORS = {
     "Critical (<3mo reserves)": "#ef4444",
 }
 
+STATUS_ORDER = [
+    "Critical (<3mo reserves)",
+    "At Risk (3-12mo reserves)",
+    "Stressed (>12mo reserves)",
+    "Survives (Surplus)",
+]
+
+
+def _classify_status(total_revenue: float, total_expenses: float, net_assets: float) -> tuple[str, float]:
+    """Return (status_label, months_to_insolvency) using the same logic as simulate_shock."""
+    if pd.isna(total_revenue) or pd.isna(total_expenses):
+        return "Survives (Surplus)", float("inf")
+    net = total_revenue - total_expenses
+    if net >= 0:
+        return "Survives (Surplus)", float("inf")
+    monthly_deficit = abs(net) / 12.0
+    if monthly_deficit <= 0 or pd.isna(net_assets):
+        return "Survives (Surplus)", float("inf")
+    months = max(0.0, min(120.0, net_assets / monthly_deficit))
+    if months > 12:
+        return "Stressed (>12mo reserves)", months
+    if months > 3:
+        return "At Risk (3-12mo reserves)", months
+    return "Critical (<3mo reserves)", months
+
 
 def _fmt_dollars(val: float) -> str:
     if abs(val) >= 1_000_000:
@@ -788,17 +813,48 @@ def simulation_page(master: pd.DataFrame) -> None:
     sdf = simulate_shock(sim_input, scenario, adjustments)
     sdf["RecoveryYears"] = sdf.apply(estimate_recovery, axis=1)
 
+    # Pre-shock baseline: classify each org using the same logic as simulate_shock,
+    # and add helper columns used by the Company Drill-Down tab.
+    _pre_classes = sdf.apply(
+        lambda r: _classify_status(
+            r.get("TotalRevenueCY", np.nan),
+            r.get("TotalExpensesCY", np.nan),
+            r.get("NetAssetsEOY", np.nan),
+        ),
+        axis=1,
+    )
+    sdf["PreShock_Status"] = [s for s, _ in _pre_classes]
+    sdf["PreShock_MonthsToInsolvency"] = [m for _, m in _pre_classes]
+    _tier_index = {s: i for i, s in enumerate(STATUS_ORDER)}
+    sdf["PreShock_Tier"] = sdf["PreShock_Status"].map(_tier_index)
+    sdf["PostShock_Tier"] = sdf["PostShock_Status"].map(_tier_index)
+    sdf["TierDowngrade"] = sdf["PreShock_Tier"] - sdf["PostShock_Tier"]
+    sdf["RevenueLostPct"] = np.where(
+        sdf["TotalRevenueCY"] > 0,
+        (sdf["TotalRevenueCY"] - sdf["PostShock_TotalRevenue"]) / sdf["TotalRevenueCY"],
+        0.0,
+    )
+
     # Compute revenue impact stats
     valid = sdf[sdf["TotalRevenueCY"] > 0]
     if len(valid) > 0:
-        revenue_lost_pct = (
-            (valid["TotalRevenueCY"] - valid["PostShock_TotalRevenue"]) / valid["TotalRevenueCY"]
-        )
-        avg_revenue_lost = revenue_lost_pct.mean()
-        pct_with_any_loss = (revenue_lost_pct > 0).mean()
+        avg_revenue_lost = valid["RevenueLostPct"].mean()
+        pct_with_any_loss = (valid["RevenueLostPct"] > 0).mean()
     else:
         avg_revenue_lost = 0.0
         pct_with_any_loss = 0.0
+
+    # Split display into two tabs: aggregate view + per-company drill-down.
+    tab_overall, tab_company = st.tabs(["Overall Impact", "Company Drill-Down"])
+
+    with tab_company:
+        _render_company_drilldown(sdf=sdf, scenario=scenario, config=config)
+
+    # Everything rendered below this point goes into the "Overall Impact" tab.
+    # We push the tab onto Streamlit's render stack manually so we don't have to
+    # re-indent the pre-existing aggregate rendering code. The matching __exit__
+    # at the bottom of this function pops the tab off the stack.
+    tab_overall.__enter__()
 
     # Impact summary
     st.markdown('<div class="section-header">Overall Impact</div>', unsafe_allow_html=True)
@@ -1017,6 +1073,279 @@ def simulation_page(master: pd.DataFrame) -> None:
         )
         fig_recov.update_layout(margin=dict(t=10), yaxis_title="Number of Organizations")
         st.plotly_chart(fig_recov, use_container_width=True)
+
+    # Pop the "Overall Impact" tab off Streamlit's render stack (pairs with the
+    # tab_overall.__enter__() call above).
+    tab_overall.__exit__(None, None, None)
+
+
+def _status_badge_html(status: str) -> str:
+    color = STATUS_COLORS.get(status, "#6b7280")
+    short = status.split("(")[0].strip()
+    return (
+        f'<span style="display:inline-block; padding:4px 12px; border-radius:20px; '
+        f'background:{color}22; color:{color}; font-weight:700; font-size:0.85rem; '
+        f'border:1px solid {color}55">{short}</span>'
+    )
+
+
+def _render_company_drilldown(sdf: pd.DataFrame, scenario: str, config: dict) -> None:
+    st.markdown(
+        '<div class="insight-box">'
+        "Explore how this scenario affects a <strong>specific organization</strong>. "
+        "Adjust the shock sliders above and see the org-level impact update live — "
+        "including status changes, revenue loss by stream, and projected recovery timeline."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    STREAM_LABELS_DRILL = {
+        "GovernmentGrantsAmt": "Government Grants",
+        "ContributionsGrantsCY": "Private Donations & Grants",
+        "ProgramServiceRevCY": "Program Service Revenue",
+        "InvestmentIncomeCY": "Investment Income",
+    }
+    STREAM_COLORS_DRILL = {
+        "Government Grants": "#ef4444",
+        "Private Donations & Grants": "#f97316",
+        "Program Service Revenue": "#6366f1",
+        "Investment Income": "#14b8a6",
+    }
+    shocked_cols = set(config["streams"].keys())
+
+    # ------------------------------------------------------------------
+    # Most Affected Organizations — discovery table (shown by default)
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-header">Most Affected Organizations</div>', unsafe_allow_html=True)
+    st.markdown(
+        "Sorted by the size of the status downgrade under this scenario, then by revenue lost. "
+        "Click any row's **Select** button below the table to drill into a specific organization."
+    )
+
+    affected = sdf[(sdf["TierDowngrade"] > 0) | (sdf["RevenueLostPct"] > 0)].copy()
+    affected = affected.sort_values(
+        by=["TierDowngrade", "RevenueLostPct", "RecoveryYears"],
+        ascending=[False, False, False],
+    ).head(20)
+
+    if len(affected) > 0:
+        table_df = pd.DataFrame({
+            "Organization": affected["OrgName"],
+            "Sector": affected.get("Sector", ""),
+            "State": affected.get("State", ""),
+            "Status Change": affected["PreShock_Status"].str.split("(").str[0].str.strip()
+                + " → "
+                + affected["PostShock_Status"].str.split("(").str[0].str.strip(),
+            "Revenue Lost": affected["RevenueLostPct"].apply(lambda v: f"{v:.1%}"),
+            "Recovery": affected["RecoveryYears"].apply(
+                lambda v: f"{v:.1f} yrs" if pd.notna(v) else "20+ yrs"
+            ),
+        })
+        st.dataframe(table_df, use_container_width=True, hide_index=True, height=300)
+    else:
+        st.info("No organizations are meaningfully affected by this scenario.")
+
+    # ------------------------------------------------------------------
+    # Org selector
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-header">Select an Organization</div>', unsafe_allow_html=True)
+
+    if "Sector" in sdf.columns:
+        sectors = ["All sectors"] + sorted(sdf["Sector"].dropna().unique().tolist())
+        col_sector, col_search = st.columns([1, 2])
+        sector_filter = col_sector.selectbox("Filter by sector", sectors, key=f"drill_sector_{scenario}")
+        if sector_filter != "All sectors":
+            org_pool = sdf[sdf["Sector"] == sector_filter]
+        else:
+            org_pool = sdf
+    else:
+        col_search = st.container()
+        org_pool = sdf
+
+    # Default to the most-affected org in the current pool
+    default_org = None
+    if len(affected) > 0:
+        candidates = affected[affected["OrgName"].isin(org_pool["OrgName"])]
+        if len(candidates) > 0:
+            default_org = candidates.iloc[0]["OrgName"]
+    if default_org is None and len(org_pool) > 0:
+        default_org = org_pool.iloc[0]["OrgName"]
+
+    org_names = org_pool["OrgName"].dropna().sort_values().unique().tolist()
+    if not org_names:
+        st.info("No organizations match this filter.")
+        return
+
+    default_idx = org_names.index(default_org) if default_org in org_names else 0
+    selected_name = col_search.selectbox(
+        "Organization",
+        org_names,
+        index=default_idx,
+        key=f"drill_org_{scenario}",
+    )
+
+    sel_rows = sdf[sdf["OrgName"] == selected_name]
+    if len(sel_rows) == 0:
+        st.warning("Could not find that organization in the simulation results.")
+        return
+    row = sel_rows.iloc[0]
+
+    # ------------------------------------------------------------------
+    # Header: Status change + org meta
+    # ------------------------------------------------------------------
+    pre_status = row["PreShock_Status"]
+    post_status = row["PostShock_Status"]
+    tier_drop = int(row["TierDowngrade"]) if pd.notna(row["TierDowngrade"]) else 0
+
+    if tier_drop > 0:
+        delta_text = f'<span style="color:#b91c1c; font-weight:700">↓ Downgraded {tier_drop} tier{"s" if tier_drop > 1 else ""}</span>'
+    elif tier_drop < 0:
+        delta_text = '<span style="color:#166534; font-weight:700">↑ Improved</span>'
+    else:
+        delta_text = '<span style="color:#6b7280; font-weight:600">No status change</span>'
+
+    sector_txt = row.get("Sector", "—") or "—"
+    state_txt = row.get("State", "—") or "—"
+    size_txt = row.get("SizeCategory", "") or ""
+
+    st.markdown(
+        f"""<div style="background:#f8f9fc; border:1px solid #dde2ec; border-radius:12px; padding:18px 22px; margin:8px 0 18px 0">
+          <div style="font-size:1.15rem; font-weight:700; color:#1a2332; margin-bottom:4px">{selected_name}</div>
+          <div style="font-size:0.85rem; color:#6b7280; margin-bottom:14px">
+            {sector_txt} · {state_txt}{f" · {size_txt}" if size_txt else ""}
+          </div>
+          <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+            <div style="font-size:0.8rem; color:#6b7280">Current</div>
+            {_status_badge_html(pre_status)}
+            <div style="font-size:1.2rem; color:#9ca3af">→</div>
+            <div style="font-size:0.8rem; color:#6b7280">Post-shock</div>
+            {_status_badge_html(post_status)}
+            <div style="margin-left:8px">{delta_text}</div>
+          </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    # ------------------------------------------------------------------
+    # Key metrics row
+    # ------------------------------------------------------------------
+    pre_rev = float(row.get("TotalRevenueCY", 0) or 0)
+    post_rev = float(row.get("PostShock_TotalRevenue", 0) or 0)
+    rev_lost_pct = float(row.get("RevenueLostPct", 0) or 0)
+    rev_lost_dollars = pre_rev - post_rev
+    months_post = row.get("MonthsToInsolvency", np.inf)
+    recovery_yrs = row.get("RecoveryYears", np.nan)
+
+    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+    mcol1.metric("Revenue Lost", _fmt_dollars(rev_lost_dollars), f"-{rev_lost_pct:.1%}")
+    post_rev_delta_pct = ((post_rev / pre_rev) - 1.0) if pre_rev > 0 else 0.0
+    mcol2.metric(
+        "Post-Shock Revenue",
+        _fmt_dollars(post_rev),
+        f"{post_rev_delta_pct:.1%} vs pre-shock",
+    )
+    if pd.notna(months_post) and np.isfinite(months_post):
+        months_label = f"{months_post:.1f} mo" if months_post < 120 else "120+ mo"
+    else:
+        months_label = "Surplus"
+    mcol3.metric("Months to Insolvency", months_label, help="How long cash reserves would last at the post-shock deficit rate.")
+    if pd.notna(recovery_yrs) and recovery_yrs > 0:
+        recov_label = f"{recovery_yrs:.1f} yrs"
+    elif pd.notna(recovery_yrs) and recovery_yrs == 0:
+        recov_label = "No deficit"
+    else:
+        recov_label = "20+ yrs"
+    mcol4.metric("Recovery Time", recov_label, help="Years to rebuild reserves assuming 5% annual revenue recovery.")
+
+    # ------------------------------------------------------------------
+    # Revenue stream breakdown: pre vs post
+    # ------------------------------------------------------------------
+    st.markdown('<div class="section-header">Revenue Stream Impact</div>', unsafe_allow_html=True)
+
+    stream_rows = []
+    for col, label in STREAM_LABELS_DRILL.items():
+        if col not in sdf.columns:
+            continue
+        pre_val = float(row.get(col, 0) or 0)
+        post_col = f"PostShock_{col}"
+        if post_col in sdf.columns:
+            post_val = float(row.get(post_col, pre_val) or 0)
+        else:
+            post_val = pre_val
+        stream_rows.append({
+            "Stream": label,
+            "Pre-Shock": pre_val,
+            "Post-Shock": post_val,
+            "IsShocked": col in shocked_cols,
+        })
+
+    if stream_rows:
+        stream_df = pd.DataFrame(stream_rows)
+        long_df = stream_df.melt(
+            id_vars=["Stream", "IsShocked"],
+            value_vars=["Pre-Shock", "Post-Shock"],
+            var_name="Phase",
+            value_name="Amount",
+        )
+        fig_streams = px.bar(
+            long_df,
+            x="Amount",
+            y="Stream",
+            color="Phase",
+            barmode="group",
+            orientation="h",
+            color_discrete_map={"Pre-Shock": "#94a3b8", "Post-Shock": "#1e3a8a"},
+            labels={"Amount": "Revenue ($)", "Stream": ""},
+        )
+        fig_streams.update_layout(
+            margin=dict(t=10, b=80),
+            height=max(260, len(stream_rows) * 70),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.45,
+                xanchor="center",
+                x=0.5,
+                traceorder="normal",
+            ),
+            legend_title_text="",
+        )
+        fig_streams.update_xaxes(
+            tickfont=dict(color="#374151"),
+            title_font=dict(color="#1f2937"),
+        )
+        fig_streams.update_yaxes(
+            tickfont=dict(color="#374151"),
+            title_font=dict(color="#1f2937"),
+        )
+        st.plotly_chart(fig_streams, use_container_width=True)
+
+        # Narrative callout about which streams drove the impact
+        shocked_impact = [
+            (r["Stream"], r["Pre-Shock"] - r["Post-Shock"])
+            for r in stream_rows
+            if r["IsShocked"] and (r["Pre-Shock"] - r["Post-Shock"]) > 0
+        ]
+        if shocked_impact and pre_rev > 0:
+            parts = [
+                f"<strong>{name}</strong> ({(loss / pre_rev):.1%} of total revenue, {_fmt_dollars(loss)} lost)"
+                for name, loss in sorted(shocked_impact, key=lambda x: -x[1])
+            ]
+            st.markdown(
+                f'<div class="insight-box-warn">'
+                f"<strong>Why this org is affected:</strong> The shock hits " + " and ".join(parts) + ". "
+                f"That's a {rev_lost_pct:.1%} total revenue hit, which drives the status change above."
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        elif rev_lost_pct == 0:
+            st.markdown(
+                '<div class="insight-box-good">'
+                "<strong>No direct exposure:</strong> This organization doesn't rely on any of the "
+                "shocked revenue streams, so its financial position is unchanged under this scenario."
+                "</div>",
+                unsafe_allow_html=True,
+            )
 
 
 # ---------------------------------------------------------------------------
