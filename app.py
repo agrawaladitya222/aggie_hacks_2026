@@ -872,6 +872,14 @@ def simulation_page(master: pd.DataFrame) -> None:
             color="PostShock_Status",
             orientation="h",
             color_discrete_map=STATUS_COLORS,
+            category_orders={
+                "PostShock_Status": [
+                    "Critical (<3mo reserves)",
+                    "At Risk (3-12mo reserves)",
+                    "Stressed (>12mo reserves)",
+                    "Survives (Surplus)",
+                ]
+            },
             labels={"Percentage": "Share of Sector", "PostShock_Status": "Post-Shock Status", "Sector": ""},
             barmode="stack",
         )
